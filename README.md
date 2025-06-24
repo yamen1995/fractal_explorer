@@ -1,7 +1,7 @@
 
 # 🌀 Fractal Explorer: Infinite Mathematical Beauty
 
-![Fractal Visualization](fractal_explorer/fractal_explorer/resources/Screenshot.png)
+![Fractal Visualization](fractal_explorer/resources/Screenshot.png)
 
 **Fractal Explorer** is an interactive desktop application that lets you explore the infinite complexity of mathematical fractals with real-time rendering and beautiful visualizations. Discover the hidden beauty of the Mandelbrot set and other fractals with intuitive controls and stunning color palettes.
 
