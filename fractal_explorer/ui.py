@@ -1,21 +1,32 @@
 import numpy as np
+import ast
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QFileDialog,
-    QSlider, QComboBox, QHBoxLayout, QProgressBar, QSizePolicy, QLineEdit
+    QSlider, QComboBox, QHBoxLayout, QProgressBar, QSizePolicy, QLineEdit, QCheckBox
 )
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPalette
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint, QTimer
-from .fractal_math import (compute_fractal, JULIA_PRESETS)
-from .colormaps import apply_colormap, COLORMAPS
-# --- Worker Thread ---
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint, QTimer, QRectF
 
+from .fractal_math import (
+    compute_fractal, compute_blended_fractal,
+    blend_fractals_mask, blend_fractals_alternating, JULIA_PRESETS
+)
+from .colormaps import apply_colormap, blend_colormaps, COLORMAPS
+
+# --- Worker Thread for Fractal Calculation ---
 class FractalWorker(QThread):
     image_ready = pyqtSignal(np.ndarray, tuple)
     progress = pyqtSignal(int)
     finished_signal = pyqtSignal()
 
-    def __init__(self, min_x, max_x, min_y, max_y, width, height, maxiter, fractal_type, julia_c=0j, colormap_name='plasma'):
+    def __init__(
+        self, min_x, max_x, min_y, max_y, width, height, maxiter, fractal_type, power,
+        julia_c=0j, colormap_name='plasma',
+        blend_enabled=False, colormap_2_name='viridis', blend_factor=0.5, blend_mode='linear', nonlinear_power=2.0, segment_point=0.5,
+        fractal_blend_enabled=False, fractal2_type=0, fractal2_power=2.0, fractal2_iter=500, fractal_blend_mode='mask', fractal_blend_factor=0.5
+    ):
         super().__init__()
+        # Fractal params
         self.min_x = min_x
         self.max_x = max_x
         self.min_y = min_y
@@ -26,17 +37,59 @@ class FractalWorker(QThread):
         self.fractal_type = fractal_type
         self.julia_c = julia_c
         self.colormap_name = colormap_name
+        self.power = power
         self._abort = False
+        # Colormap blending params
+        self.blend_enabled = blend_enabled
+        self.colormap_2_name = colormap_2_name
+        self.blend_factor = blend_factor
+        self.blend_mode = blend_mode
+        self.nonlinear_power = nonlinear_power
+        self.segment_point = segment_point
+        # Fractal blending params
+        self.fractal_blend_enabled = fractal_blend_enabled
+        self.fractal2_type = fractal2_type
+        self.fractal2_power = fractal2_power
+        self.fractal2_iter = fractal2_iter
+        self.fractal_blend_mode = fractal_blend_mode
+        self.fractal_blend_factor = fractal_blend_factor
 
     def run(self):
-        pixels = compute_fractal(
-            self.min_x, self.max_x, self.min_y, self.max_y,
-            self.width, self.height, self.maxiter,
-            self.fractal_type, self.julia_c
-        )
+        def progress_callback(percent):
+            self.progress.emit(percent)
+        if self.fractal_blend_enabled:
+            pixels1, pixels2 = compute_blended_fractal(
+                self.min_x, self.max_x, self.min_y, self.max_y,
+                self.width, self.height,
+                self.maxiter, self.fractal_type, self.power, self.julia_c,
+                self.fractal2_iter, self.fractal2_type, self.fractal2_power, self.julia_c,
+                progress_callback
+            )
+            if self.fractal_blend_mode == 'mask':
+                pixels = blend_fractals_mask(pixels1, pixels2, self.fractal_blend_factor)
+            else:
+                pixels = blend_fractals_alternating(pixels1, pixels2, mode='checker')
+        else:
+            pixels = compute_fractal(
+                self.min_x, self.max_x, self.min_y, self.max_y,
+                self.width, self.height, self.maxiter,
+                self.fractal_type, self.power, self.julia_c,
+                progress_callback
+            )
         if self._abort:
             return
-        colored = apply_colormap(pixels, self.colormap_name)
+        if self.blend_enabled:
+            colored = blend_colormaps(
+                pixels,
+                self.colormap_name,
+                self.colormap_2_name,
+                self.blend_factor,
+                self.blend_mode,
+                self.nonlinear_power,
+                self.segment_point
+            )
+        else:
+            colored = apply_colormap(pixels, self.colormap_name)
         self.image_ready.emit(colored, (self.min_x, self.max_x, self.min_y, self.max_y))
         self.progress.emit(100)
         self.finished_signal.emit()
@@ -45,7 +98,6 @@ class FractalWorker(QThread):
         self._abort = True
 
 # --- Custom QLabel for Selection Rectangle ---
-
 class FractalImageLabel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,68 +119,61 @@ class FractalImageLabel(QLabel):
             painter.drawRect(self.selection_rect.normalized())
 
 # --- Main Application Widget ---
-
 class FractalExplorer(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fractal Explorer")
         self.setMinimumSize(800, 600)
+        self._init_state()
+        self._setup_ui()
+        QTimer.singleShot(100, self.start_render)
+
+    def _init_state(self):
         # Fractal parameters
         self.min_x, self.max_x = -2.0, 1.0
         self.min_y, self.max_y = -1.5, 1.5
         self.maxiter = 500
         self.colormap_name = 'plasma'
         self.zoom_factor = 1.0
-        self.panning = False
-        self.last_pos = None
+        self.fractal_type = 0
+        self.julia_c = complex(-0.7, 0.27015)
         self.selection_active = False
         self.current_image = None
         self.last_render_params = None
         self.pixmap_offset = QPoint(0, 0)
         self.pixmap_size = QPoint(0, 0)
-        self.fractal_type = 0
-        self.julia_c = complex(-0.7, 0.27015)
-        self.selection_rect = QRect()
         self.worker = None
-        self._setup_ui()
-        QTimer.singleShot(100, self.start_render)
+        self.last_pos = None
 
     def _setup_ui(self):
-        # Image label
+        # --- Controls ---
         self.image_label = FractalImageLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # Status bar
         self.status_label = QLabel("Ready")
         self.coord_label = QLabel("")
         self.zoom_label = QLabel(f"Zoom: 1x")
         self.iter_label = QLabel(f"Iterations: {self.maxiter}")
-        # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setVisible(False)
-        # Buttons
         self.render_button = QPushButton("Render")
         self.render_button.clicked.connect(self.start_render)
         self.save_button = QPushButton("Save Image")
         self.save_button.clicked.connect(self.save_image)
         self.reset_button = QPushButton("Reset View")
         self.reset_button.clicked.connect(self.reset_view)
-        # Iteration control
         self.iter_slider = QSlider(Qt.Horizontal)
         self.iter_slider.setRange(100, 50000)
         self.iter_slider.setValue(self.maxiter)
         self.iter_slider.valueChanged.connect(self.set_iterations)
-        # Colormap selection
         self.cmap_combo = QComboBox()
         self.cmap_combo.addItems(list(COLORMAPS.keys()))
         self.cmap_combo.setCurrentText(self.colormap_name)
         self.cmap_combo.currentTextChanged.connect(self.set_colormap)
-        # Fractal set selection
         self.fractal_combo = QComboBox()
-        self.fractal_combo.addItems(["Mandelbrot", "Julia", "Burning Ship", "Tricorn"])
+        self.fractal_combo.addItems(["Mandelbrot", "Julia", "Burning Ship", "Tricorn", "Celtic Mandelbrot", "Buffalo"])
         self.fractal_combo.currentIndexChanged.connect(self.fractal_set_changed)
-        # Julia controls
         self.julia_real_input = QLineEdit("-0.7")
         self.julia_real_input.setFixedWidth(60)
         self.julia_imag_input = QLineEdit("0.27015")
@@ -136,10 +181,15 @@ class FractalExplorer(QWidget):
         self.julia_real_input.editingFinished.connect(self.start_render)
         self.julia_imag_input.editingFinished.connect(self.start_render)
         self.julia_combo = QComboBox()
+        self.exponent = QLineEdit("2")
+        self.exponent.setFixedWidth(80)
+        self.exponent.editingFinished.connect(self.start_render)
+        self.complex_mode = QCheckBox("Complex")
+        self.complex_mode.stateChanged.connect(self.start_render)
         for name, _ in JULIA_PRESETS:
             self.julia_combo.addItem(name)
         self.julia_combo.currentIndexChanged.connect(self.handle_julia_combo)
-        # Layouts
+        # --- Layouts ---
         control_layout = QHBoxLayout()
         control_layout.addWidget(QLabel("Iterations:"))
         control_layout.addWidget(self.iter_slider)
@@ -159,29 +209,98 @@ class FractalExplorer(QWidget):
         fractal_layout.addWidget(self.julia_imag_input)
         fractal_layout.addWidget(QLabel("i"))
         fractal_layout.addStretch(1)
+        fractal_layout.addWidget(QLabel("Exponent:"))
+        fractal_layout.addWidget(self.exponent)
+        fractal_layout.addWidget(self.complex_mode)
+        # --- Colormap blending controls ---
+        self.blend_checkbox = QCheckBox("Blend Colormaps")
+        self.blend_checkbox.stateChanged.connect(self.start_render)
+        self.cmap2_combo = QComboBox()
+        self.cmap2_combo.addItems(list(COLORMAPS.keys()))
+        self.cmap2_combo.setCurrentText('viridis')
+        self.cmap2_combo.currentTextChanged.connect(self.start_render)
+        self.blend_factor_slider = QSlider(Qt.Horizontal)
+        self.blend_factor_slider.setRange(0, 100)
+        self.blend_factor_slider.setValue(50)
+        self.blend_factor_slider.valueChanged.connect(self.update_blend_params)
+        self.blend_mode_combo = QComboBox()
+        self.blend_mode_combo.addItems(['linear', 'nonlinear', 'segment'])
+        self.blend_mode_combo.currentTextChanged.connect(self.update_blend_params)
+        self.nonlinear_power_input = QLineEdit("2.0")
+        self.nonlinear_power_input.setFixedWidth(50)
+        self.nonlinear_power_input.editingFinished.connect(self.update_blend_params)
+        self.segment_point_input = QLineEdit("0.5")
+        self.segment_point_input.setFixedWidth(50)
+        self.segment_point_input.editingFinished.connect(self.update_blend_params)
+        blend_layout = QHBoxLayout()
+        blend_layout.addWidget(self.blend_checkbox)
+        blend_layout.addWidget(QLabel("Colormap 2:"))
+        blend_layout.addWidget(self.cmap2_combo)
+        blend_layout.addWidget(QLabel("Blend Factor:"))
+        blend_layout.addWidget(self.blend_factor_slider)
+        blend_layout.addWidget(QLabel("Blend Mode:"))
+        blend_layout.addWidget(self.blend_mode_combo)
+        blend_layout.addWidget(QLabel("Power:"))
+        blend_layout.addWidget(self.nonlinear_power_input)
+        blend_layout.addWidget(QLabel("Segment:"))
+        blend_layout.addWidget(self.segment_point_input)
+        # --- Fractal blending controls ---
+        self.fractal_blend_checkbox = QCheckBox("Blend Two Fractals")
+        self.fractal_blend_checkbox.stateChanged.connect(self.start_render)
+        self.fractal_blend_mode_combo = QComboBox()
+        self.fractal_blend_mode_combo.addItems(['mask', 'alternating'])
+        self.fractal_blend_mode_combo.currentTextChanged.connect(self.start_render)
+        self.fractal2_combo = QComboBox()
+        self.fractal2_combo.addItems(["Mandelbrot", "Julia", "Burning Ship", "Tricorn", "Celtic Mandelbrot", "Buffalo"])
+        self.fractal2_combo.setCurrentIndex(0)
+        self.fractal2_combo.currentIndexChanged.connect(self.update_fractal_blend_params)
+        self.fractal2_power = QLineEdit("2")
+        self.fractal2_power.setFixedWidth(60)
+        self.fractal2_power.editingFinished.connect(self.update_fractal_blend_params)
+        self.fractal2_iter = QLineEdit("500")
+        self.fractal2_iter.setFixedWidth(60)
+        self.fractal2_iter.editingFinished.connect(self.update_fractal_blend_params)
+        self.fractal_blend_factor_slider = QSlider(Qt.Horizontal)
+        self.fractal_blend_factor_slider.setRange(0, 100)
+        self.fractal_blend_factor_slider.setValue(50)
+        self.fractal_blend_factor_slider.valueChanged.connect(self.update_fractal_blend_params)
+        fractal_blend_layout = QHBoxLayout()
+        fractal_blend_layout.addWidget(self.fractal_blend_checkbox)
+        fractal_blend_layout.addWidget(QLabel("Fractal 2:"))
+        fractal_blend_layout.addWidget(self.fractal2_combo)
+        fractal_blend_layout.addWidget(QLabel("Power:"))
+        fractal_blend_layout.addWidget(self.fractal2_power)
+        fractal_blend_layout.addWidget(QLabel("Iterations:"))
+        fractal_blend_layout.addWidget(self.fractal2_iter)
+        fractal_blend_layout.addWidget(QLabel("Blend Mode:"))
+        fractal_blend_layout.addWidget(self.fractal_blend_mode_combo)
+        fractal_blend_layout.addWidget(QLabel("Blend Factor:"))
+        fractal_blend_layout.addWidget(self.fractal_blend_factor_slider)
         status_layout = QHBoxLayout()
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.coord_label, 1, Qt.AlignRight)
         status_layout.addWidget(self.zoom_label, 0, Qt.AlignRight)
-
         credit_label = QLabel("Developed by: Yamen Tahseen")
         credit_label.setAlignment(Qt.AlignCenter)
         credit_label.setStyleSheet("color: gray; font-size: 10pt;")
-
         main_layout = QVBoxLayout()
         main_layout.addWidget(self.image_label, 1)
         main_layout.addLayout(control_layout)
         main_layout.addLayout(fractal_layout)
+        main_layout.addLayout(blend_layout)
+        main_layout.addLayout(fractal_blend_layout)
         main_layout.addLayout(status_layout)
         main_layout.addWidget(self.progress_bar)
-        main_layout.addWidget(credit_label) 
+        main_layout.addWidget(credit_label)
         self.setLayout(main_layout)
         # Mouse tracking and events
         self.image_label.setMouseTracking(True)
         self.image_label.mouseMoveEvent = self.mouse_move_event
         self.image_label.mousePressEvent = self.mouse_press_event
         self.image_label.mouseReleaseEvent = self.mouse_release_event
+        self._set_styles()
 
+    def _set_styles(self):
         self.setStyleSheet("""
             QWidget {
                 font-family: 'Segoe UI', 'Arial', sans-serif;
@@ -230,6 +349,7 @@ class FractalExplorer(QWidget):
             }
         """)
 
+    # --- UI Event Handlers ---
     def fractal_set_changed(self, idx):
         self.fractal_type = idx
         self.update_julia_visibility()
@@ -264,6 +384,7 @@ class FractalExplorer(QWidget):
         self.maxiter = value
         self.iter_label.setText(f"Iterations: {value}")
 
+    # --- Rendering Pipeline ---
     def start_render(self):
         if self.worker and self.worker.isRunning():
             self.worker.abort()
@@ -271,8 +392,23 @@ class FractalExplorer(QWidget):
         julia_c = self.get_julia_c()
         width = self.image_label.width()
         height = self.image_label.height()
+        power = self.get_exponent()
         if width < 50 or height < 50:
             return
+        # Gather blending parameters
+        blend_enabled = self.blend_checkbox.isChecked()
+        colormap_2_name = self.cmap2_combo.currentText()
+        blend_factor = self.blend_factor_slider.value() / 100.0
+        blend_mode = self.blend_mode_combo.currentText()
+        nonlinear_power = self._safe_float(self.nonlinear_power_input.text(), 2.0)
+        segment_point = self._safe_float(self.segment_point_input.text(), 0.5)
+        # Gather fractal blending parameters
+        fractal_blend_enabled = self.fractal_blend_checkbox.isChecked()
+        fractal2_type = self.fractal2_combo.currentIndex()
+        fractal2_power = self._safe_float(self.fractal2_power.text(), 2.0)
+        fractal2_iter = self._safe_int(self.fractal2_iter.text(), 500)
+        fractal_blend_mode = self.fractal_blend_mode_combo.currentText()
+        fractal_blend_factor = self.fractal_blend_factor_slider.value() / 100.0
         self.status_label.setText("Rendering...")
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
@@ -281,19 +417,65 @@ class FractalExplorer(QWidget):
             width, height, self.maxiter,
             fractal_type=self.fractal_type,
             julia_c=julia_c,
-            colormap_name=self.colormap_name
+            colormap_name=self.colormap_name,
+            power=power,
+            blend_enabled=blend_enabled,
+            colormap_2_name=colormap_2_name,
+            blend_factor=blend_factor,
+            blend_mode=blend_mode,
+            nonlinear_power=nonlinear_power,
+            segment_point=segment_point,
+            fractal_blend_enabled=fractal_blend_enabled,
+            fractal2_type=fractal2_type,
+            fractal2_power=fractal2_power,
+            fractal2_iter=fractal2_iter,
+            fractal_blend_mode=fractal_blend_mode,
+            fractal_blend_factor=fractal_blend_factor
         )
         self.worker.image_ready.connect(self.handle_image_ready)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.finished_signal.connect(self.render_finished)
         self.worker.start()
 
+    def _safe_float(self, text, default):
+        try:
+            return float(text)
+        except Exception:
+            return default
+
+    def _safe_int(self, text, default):
+        try:
+            return int(text)
+        except Exception:
+            return default
+
+    def get_exponent(self):
+        text = self.exponent.text()
+        if self.complex_mode.isChecked():
+            try:
+                value = ast.literal_eval(text)
+                if isinstance(value, (int, float, complex)):
+                    return complex(value)
+                else:
+                    return 2 + 0j
+            except Exception:
+                return 2 + 0j
+        else:
+            try:
+                value = ast.literal_eval(text)
+                if isinstance(value, (int, float)):
+                    return float(value)
+                else:
+                    return 2.0
+            except Exception:
+                return 2.0
+
     def get_julia_c(self):
         try:
             real_part = float(self.julia_real_input.text())
             imag_part = float(self.julia_imag_input.text())
             return complex(real_part, imag_part)
-        except ValueError:
+        except Exception:
             return complex(-0.7, 0.27015)
 
     def handle_image_ready(self, image_array, params):
@@ -391,9 +573,8 @@ class FractalExplorer(QWidget):
             self.coord_label.setText(f"({real:.8f}, {imag:.8f})")
         else:
             self.coord_label.setText("")
-        # Handle selection rectangle
         if self.selection_active and self.last_pos:
-            rect = QRect(self.last_pos, event.pos()).normalized()
+            rect = QRectF(self.last_pos, event.pos()).normalized()
             self.image_label.set_selection_rect(rect)
 
     def mouse_press_event(self, event):
@@ -402,15 +583,21 @@ class FractalExplorer(QWidget):
             self.selection_active = True
         elif event.button() == Qt.RightButton:
             self.zoom(1.5, self.image_label.width()//2, self.image_label.height()//2)
+            self.image_label.clear_selection_rect()
 
     def mouse_release_event(self, event):
         if event.button() == Qt.LeftButton and self.selection_active:
             self.selection_active = False
             rect = self.image_label.selection_rect
             if rect and rect.width() > 5 and rect.height() > 5:
-                pixmap_rect = QRect(self.pixmap_offset, self.pixmap_size)
+                pixmap_rect = QRectF(self.pixmap_offset, self.pixmap_size)
                 adj_rect = rect.intersected(pixmap_rect)
-                adj_rect.translate(-self.pixmap_offset.x(), -self.pixmap_offset.y())
+                adj_rect = QRect(
+                    int(adj_rect.left() - self.pixmap_offset.x()),
+                    int(adj_rect.top() - self.pixmap_offset.y()),
+                    int(adj_rect.width()),
+                    int(adj_rect.height())
+                )
                 if adj_rect.width() > 5 and adj_rect.height() > 5:
                     x1 = adj_rect.left() * (self.max_x - self.min_x) / self.pixmap_size.x() + self.min_x
                     x2 = adj_rect.right() * (self.max_x - self.min_x) / self.pixmap_size.x() + self.min_x
@@ -425,6 +612,13 @@ class FractalExplorer(QWidget):
     def resizeEvent(self, event):
         self.start_render()
         super().resizeEvent(event)
+    def update_blend_params(self, *args):
+    # Just update UI state, do NOT render
+        pass
+
+    def update_fractal_blend_params(self, *args):
+    # Just update UI state, do NOT render
+        pass
 
 def set_dark_palette(app):
     palette = QPalette()
