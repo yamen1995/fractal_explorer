@@ -156,6 +156,12 @@ The code is organized for easy customization:
 - Extend the UI via `ui.py`
 
 ---
+## update 1
+- Branch: `feature/fractal-blending-and-exponents`
+1. New feature: Color map blending (linear, nonlinear, segment)
+2. New feature: Fractal blending (mask, alternating: checker, vertical, horizontal)
+3. New feature: Real and complex exponent support
+4. Fix: Removed parallel processing in favor of callback-based rendering
 
 ## 🏁 Credits
 

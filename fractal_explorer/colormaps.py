@@ -105,3 +105,46 @@ def apply_colormap(arr, colormap_name='plasma'):
     lut = COLORMAPS.get(colormap_name, COLORMAPS['plasma'])
     indices = (normalized * (lut.shape[0] - 1)).astype(np.uint8)
     return lut[indices]
+
+def blend_colormaps(
+    arr,
+    colormap_name='plasma',
+    colormap_2_name='viridis',
+    blend_factor=0.5,
+    blend_mode='linear',
+    nonlinear_power=2.0,
+    segment_point=0.5
+):
+    """
+    Blend two colormaps using different modes.
+    blend_mode: 'linear', 'nonlinear', 'segment'
+    nonlinear_power: used if blend_mode == 'nonlinear'
+    segment_point: used if blend_mode == 'segment', in [0,1]
+    """
+    min_val = arr.min()
+    max_val = arr.max()
+    if max_val - min_val < 1e-10:
+        normalized = np.zeros_like(arr)
+    else:
+        normalized = (arr - min_val) / (max_val - min_val)
+    lut1 = COLORMAPS.get(colormap_name, COLORMAPS['plasma'])
+    lut2 = COLORMAPS.get(colormap_2_name, COLORMAPS['viridis'])
+    # Compute indices for each colormap separately
+    indices1 = (normalized * (lut1.shape[0] - 1)).astype(np.uint8)
+    indices2 = (normalized * (lut2.shape[0] - 1)).astype(np.uint8)
+    colors1 = lut1[indices1]
+    colors2 = lut2[indices2]
+
+    if blend_mode == 'linear':
+        blended = colors1 * (1 - blend_factor) + colors2 * blend_factor
+    elif blend_mode == 'nonlinear':
+        t = np.clip(blend_factor, 0, 1)
+        t_nl = t ** nonlinear_power
+        blended = colors1 * (1 - t_nl) + colors2 * t_nl
+    elif blend_mode == 'segment':
+        mask = normalized < segment_point
+        blended = np.where(mask[..., None], colors1, colors2)
+    else:
+        blended = colors1 * (1 - blend_factor) + colors2 * blend_factor
+
+    return blended.astype(np.uint8)
