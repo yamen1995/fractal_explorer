@@ -1,28 +1,20 @@
 import os
 import PyInstaller.__main__
 
-
-SCRIPT = "fractal_explorer/fractal_explorer/main.py"
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(BASE_DIR, "fractal_explorer", "main.py")
+ICON_PATH = os.path.join(BASE_DIR, "fractal_explorer", "resources", "icon.ico")
 
 APP_NAME = "FractalExplorer"
 
-
-ICON_PATH = "fractal_explorer/fractal_explorer/resources/icon.ico"
-
-
 def build_exe():
     cmd = [
-        "--name=%s" % APP_NAME,
+        f"--name={APP_NAME}",
         "--onefile",
-        "--windowed", 
+        "--windowed",
+        f"--icon={ICON_PATH}",
+        SCRIPT
     ]
-
-    if ICON_PATH:
-        cmd.append(f"--icon={ICON_PATH}")
-
-    cmd.append(SCRIPT)
-
     PyInstaller.__main__.run(cmd)
 
 if __name__ == "__main__":

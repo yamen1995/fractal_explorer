@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPalette
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint, QTimer, QRectF
 
-from .fractal_math import (
+from fractal_explorer.fractal_math import (
     compute_fractal, compute_blended_fractal,
     blend_fractals_mask, blend_fractals_alternating, JULIA_PRESETS
 )
