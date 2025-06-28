@@ -94,6 +94,17 @@ def fractal_smooth(c, maxiter, fractal_type, power, constant_c=0j):
 
     return maxiter
 
+def _get_dtype_for_zoom(min_x, max_x, min_y, max_y):
+    # Use float128 if available and zoom is deep
+    try:
+        float128 = np.float128
+    except AttributeError:
+        float128 = np.float64
+    threshold = 1e-10  # You can adjust this threshold
+    if abs(max_x - min_x) < threshold or abs(max_y - min_y) < threshold:
+        return float128
+    return np.float64
+
 def compute_fractal(
     min_x, max_x, min_y, max_y, width, height,
     maxiter, fractal_type, power_or_sequence, constant_c=0j,
@@ -106,6 +117,7 @@ def compute_fractal(
     power_or_sequence is the exponent for complex fractals, or the sequence string for Lyapunov.
     Returns a 2D numpy array of floats.
     """
+    dtype = _get_dtype_for_zoom(min_x, max_x, min_y, max_y)
     pixels = np.zeros((height, width), dtype=np.float64)
 
     for x_idx in range(width):
@@ -135,6 +147,7 @@ def compute_blended_fractal(
     Compute two fractal arrays with different parameters for blending.
     Returns: pixels1, pixels2 (both 2D numpy arrays)
     """
+    dtype = _get_dtype_for_zoom(min_x, max_x, min_y, max_y)
     pixels1 = np.zeros((height, width), dtype=np.float64)
     pixels2 = np.zeros((height, width), dtype=np.float64)
 
