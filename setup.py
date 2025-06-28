@@ -6,7 +6,7 @@ SCRIPT = os.path.join(BASE_DIR, "fractal_explorer", "main.py")
 ICON_PATH = os.path.join(BASE_DIR, "fractal_explorer", "resources", "icon.ico")
 
 APP_NAME = "FractalExplorer"
-APP_VERSION = "1.1" # Added version
+APP_VERSION = "2.1" # Added version
 
 def build_exe():
     cmd = [
