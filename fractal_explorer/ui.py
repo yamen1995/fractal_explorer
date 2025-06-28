@@ -1,5 +1,6 @@
 import numpy as np
 import ast
+import imageio
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QFileDialog,
     QSlider, QComboBox, QHBoxLayout, QProgressBar, QSizePolicy, QLineEdit, QCheckBox
@@ -20,16 +21,15 @@ class FractalWorker(QThread):
     finished_signal = pyqtSignal()
 
     def __init__(
-        self, min_x, max_x, min_y, max_y, width, height, maxiter, fractal_type, power_or_sequence, # Modified
+        self, min_x, max_x, min_y, max_y, width, height, maxiter, fractal_type, power_or_sequence,
         julia_c=0j, colormap_name='plasma',
-        lyapunov_seq="AB", lyapunov_warmup=100, # Added for Lyapunov
+        lyapunov_seq="AB", lyapunov_warmup=100,
         blend_enabled=False, colormap_2_name='viridis', blend_factor=0.5, blend_mode='linear', nonlinear_power=2.0, segment_point=0.5,
-        fractal_blend_enabled=False, fractal2_type=0, fractal2_power_or_sequence=2.0, fractal2_iter=500, # Modified
+        fractal_blend_enabled=False, fractal2_type=0, fractal2_power_or_sequence=2.0, fractal2_iter=500,
         fractal_blend_mode='mask', fractal_blend_factor=0.5,
-        lyapunov_seq2="AB" # Added for Lyapunov in blending
+        lyapunov_seq2="AB"
     ):
         super().__init__()
-        # Fractal params
         self.min_x = min_x
         self.max_x = max_x
         self.min_y = min_y
@@ -40,25 +40,23 @@ class FractalWorker(QThread):
         self.fractal_type = fractal_type
         self.julia_c = julia_c
         self.colormap_name = colormap_name
-        self.power_or_sequence = power_or_sequence # Modified
-        self.lyapunov_seq = lyapunov_seq # Added
-        self.lyapunov_warmup = lyapunov_warmup # Added
+        self.power_or_sequence = power_or_sequence
+        self.lyapunov_seq = lyapunov_seq
+        self.lyapunov_warmup = lyapunov_warmup
         self._abort = False
-        # Colormap blending params
         self.blend_enabled = blend_enabled
         self.colormap_2_name = colormap_2_name
         self.blend_factor = blend_factor
         self.blend_mode = blend_mode
         self.nonlinear_power = nonlinear_power
         self.segment_point = segment_point
-        # Fractal blending params
         self.fractal_blend_enabled = fractal_blend_enabled
         self.fractal2_type = fractal2_type
-        self.fractal2_power_or_sequence = fractal2_power_or_sequence # Modified
+        self.fractal2_power_or_sequence = fractal2_power_or_sequence
         self.fractal2_iter = fractal2_iter
         self.fractal_blend_mode = fractal_blend_mode
         self.fractal_blend_factor = fractal_blend_factor
-        self.lyapunov_seq2 = lyapunov_seq2 # Added
+        self.lyapunov_seq2 = lyapunov_seq2
 
     def run(self):
         def progress_callback(percent):
@@ -68,9 +66,9 @@ class FractalWorker(QThread):
                 self.min_x, self.max_x, self.min_y, self.max_y,
                 self.width, self.height,
                 self.maxiter, self.fractal_type, self.power_or_sequence, self.julia_c,
-                self.fractal2_iter, self.fractal2_type, self.fractal2_power_or_sequence, self.julia_c, # Assuming julia_c is not used for Lyapunov in blending context or needs adjustment
-                lyapunov_seq1=self.lyapunov_seq if self.fractal_type == 6 else "AB", # Pass correct sequence
-                lyapunov_seq2=self.lyapunov_seq2 if self.fractal2_type == 6 else "AB", # Pass correct sequence
+                self.fractal2_iter, self.fractal2_type, self.fractal2_power_or_sequence, self.julia_c,
+                lyapunov_seq1=self.lyapunov_seq if self.fractal_type == 6 else "AB",
+                lyapunov_seq2=self.lyapunov_seq2 if self.fractal2_type == 6 else "AB",
                 lyapunov_warmup=self.lyapunov_warmup,
                 progress_callback=progress_callback
             )
@@ -82,37 +80,25 @@ class FractalWorker(QThread):
             pixels = compute_fractal(
                 self.min_x, self.max_x, self.min_y, self.max_y,
                 self.width, self.height, self.maxiter,
-                self.fractal_type, self.power_or_sequence, self.julia_c, # Modified
-                lyapunov_seq=self.lyapunov_seq, lyapunov_warmup=self.lyapunov_warmup, # Added
+                self.fractal_type, self.power_or_sequence, self.julia_c,
+                lyapunov_seq=self.lyapunov_seq, lyapunov_warmup=self.lyapunov_warmup,
                 progress_callback=progress_callback
             )
         if self._abort:
             return
 
-        # Determine the primary fractal type for special coloring
-        # In fractal blending mode, pixels is already a blended result of raw data.
-        # The special Lyapunov coloring will only apply if NOT in fractal_blend_enabled mode.
-        effective_fractal_type = self.fractal_type if not self.fractal_blend_enabled else -1 # -1 indicates no special handling
+        effective_fractal_type = self.fractal_type if not self.fractal_blend_enabled else -1
 
-        if effective_fractal_type == 6: # Lyapunov fractal, and not in fractal blending mode
-            if self.blend_enabled: # Colormap blending for Lyapunov
-                # Apply Lyapunov specific coloring as the first "layer"
+        if effective_fractal_type == 6:
+            if self.blend_enabled:
                 rgb1 = apply_lyapunov_colormap(pixels)
-                # For the second "layer", apply a standard colormap to the raw Lyapunov data
-                # Need to handle normalization carefully if apply_colormap expects it
-                # apply_colormap handles its own normalization.
-                rgb2_data_copy = np.copy(pixels) # Ensure original data is not altered if apply_colormap modifies inplace
-                rgb2 = apply_colormap(rgb2_data_copy, self.colormap_2_name)
-
-                # Simple linear blend of the two RGB images
-                # Note: self.blend_mode, nonlinear_power, segment_point are not used in this direct RGB blend.
-                # This is a simplification. A more advanced blend might try to use those.
+                rgb2 = apply_colormap(np.copy(pixels), self.colormap_2_name)
                 colored = rgb1 * (1 - self.blend_factor) + rgb2 * self.blend_factor
                 colored = np.clip(colored, 0, 255).astype(np.uint8)
-            else: # Single Lyapunov fractal, no colormap blending
+            else:
                 colored = apply_lyapunov_colormap(pixels)
-        else: # Not a Lyapunov fractal (or in fractal blending mode, treating as standard)
-            if self.blend_enabled: # Standard colormap blending
+        else:
+            if self.blend_enabled:
                 colored = blend_colormaps(
                     pixels,
                     self.colormap_name,
@@ -122,10 +108,10 @@ class FractalWorker(QThread):
                     self.nonlinear_power,
                     self.segment_point
                 )
-            else: # Standard single colormap
+            else:
                 colored = apply_colormap(pixels, self.colormap_name)
 
-        if self._abort: # Check again in case coloring took time
+        if self._abort:
             return
 
         self.image_ready.emit(colored, (self.min_x, self.max_x, self.min_y, self.max_y))
@@ -167,7 +153,6 @@ class FractalExplorer(QWidget):
         QTimer.singleShot(100, self.start_render)
 
     def _init_state(self):
-        # Fractal parameters
         self.min_x, self.max_x = -2.0, 1.0
         self.min_y, self.max_y = -1.5, 1.5
         self.maxiter = 500
@@ -182,6 +167,8 @@ class FractalExplorer(QWidget):
         self.pixmap_size = QPoint(0, 0)
         self.worker = None
         self.last_pos = None
+        self.animation_width = None
+        self.animation_height = None
 
     def _setup_ui(self):
         # --- Controls ---
@@ -581,29 +568,31 @@ class FractalExplorer(QWidget):
             self.worker.abort()
             self.worker.wait()
 
-        width = self.image_label.width()
-        height = self.image_label.height()
-        if width < 50 or height < 50: # Too small to render
+        # Use locked size during animation, else use current widget size
+        if self.animation_width and self.animation_height and getattr(self, "animation_timer", None) and self.animation_timer.isActive():
+            width = self.animation_width
+            height = self.animation_height
+        else:
+            width = self.image_label.width()
+            height = self.image_label.height()
+        if width < 50 or height < 50:
             return
 
         julia_c = self.get_julia_c()
-
-        # Determine power_or_sequence based on fractal type
         current_fractal_type = self.fractal_combo.currentIndex()
-        lyapunov_sequence = "AB" # Default
-        power_val = 2.0 # Default for complex
+        lyapunov_sequence = "AB"
+        power_val = 2.0
 
-        if current_fractal_type == 6: # Lyapunov
+        if current_fractal_type == 6:
             power_or_sequence = self.lyapunov_sequence_input.text().upper()
             if not power_or_sequence or not all(c in 'AB' for c in power_or_sequence):
-                power_or_sequence = "AB" # Fallback to default if invalid
+                power_or_sequence = "AB"
                 self.lyapunov_sequence_input.setText(power_or_sequence)
-            lyapunov_sequence = power_or_sequence # Specific variable for clarity
-        else: # Complex fractals
+            lyapunov_sequence = power_or_sequence
+        else:
             power_or_sequence = self.get_exponent()
-            power_val = power_or_sequence # Store for clarity if needed elsewhere
+            power_val = power_or_sequence
 
-        # Gather blending parameters (colormap)
         blend_enabled = self.blend_checkbox.isChecked()
         colormap_2_name = self.cmap2_combo.currentText()
         blend_factor = self.blend_factor_slider.value() / 100.0
@@ -611,33 +600,31 @@ class FractalExplorer(QWidget):
         nonlinear_power = self._safe_float(self.nonlinear_power_input.text(), 2.0)
         segment_point = self._safe_float(self.segment_point_input.text(), 0.5)
 
-        # Gather fractal blending parameters
         fractal_blend_enabled = self.fractal_blend_checkbox.isChecked()
         fractal2_type = self.fractal2_combo.currentIndex()
         fractal2_iter_val = self._safe_int(self.fractal2_iter_input.text(), 500)
         fractal_blend_mode = self.fractal_blend_mode_combo.currentText()
         fractal_blend_factor_val = self.fractal_blend_factor_slider.value() / 100.0
 
-        lyapunov_seq2_val = "AB" # Default for fractal 2 if Lyapunov
-        power2_val = 2.0 # Default power for fractal 2 if complex
+        lyapunov_seq2_val = "AB"
+        power2_val = 2.0
 
-        if fractal2_type == 6: # Lyapunov for fractal 2
+        if fractal2_type == 6:
             fractal2_power_or_sequence = self.fractal2_lyapunov_seq_input.text().upper()
             if not fractal2_power_or_sequence or not all(c in 'AB' for c in fractal2_power_or_sequence):
-                fractal2_power_or_sequence = "AB" # Fallback
+                fractal2_power_or_sequence = "AB"
                 self.fractal2_lyapunov_seq_input.setText(fractal2_power_or_sequence)
             lyapunov_seq2_val = fractal2_power_or_sequence
-        else: # Complex fractal for fractal 2
+        else:
             try:
                 value = ast.literal_eval(self.fractal2_power_input.text())
                 if isinstance(value, (int, float, complex)):
-                    fractal2_power_or_sequence = complex(value) # Ensure it's complex for consistency
+                    fractal2_power_or_sequence = complex(value)
                 else:
-                    fractal2_power_or_sequence = 2.0 + 0j # Default complex
-            except (ValueError, SyntaxError, TypeError): # More specific exceptions
-                fractal2_power_or_sequence = 2.0 + 0j # Default complex
-            power2_val = fractal2_power_or_sequence # This var is not actually used elsewhere it seems
-
+                    fractal2_power_or_sequence = 2.0 + 0j
+            except (ValueError, SyntaxError, TypeError):
+                fractal2_power_or_sequence = 2.0 + 0j
+            power2_val = fractal2_power_or_sequence
 
         self.status_label.setText("Rendering...")
         self.progress_bar.setVisible(True)
@@ -647,11 +634,10 @@ class FractalExplorer(QWidget):
             self.min_x, self.max_x, self.min_y, self.max_y,
             width, height, self.maxiter,
             fractal_type=current_fractal_type,
-            power_or_sequence=power_or_sequence, # Pass the determined value
+            power_or_sequence=power_or_sequence,
             julia_c=julia_c,
             colormap_name=self.colormap_name,
-            lyapunov_seq=lyapunov_sequence, # Pass specific lyapunov sequence
-            # lyapunov_warmup can remain default in worker or be made configurable
+            lyapunov_seq=lyapunov_sequence,
             blend_enabled=blend_enabled,
             colormap_2_name=colormap_2_name,
             blend_factor=blend_factor,
@@ -660,9 +646,9 @@ class FractalExplorer(QWidget):
             segment_point=segment_point,
             fractal_blend_enabled=fractal_blend_enabled,
             fractal2_type=fractal2_type,
-            fractal2_power_or_sequence=fractal2_power_or_sequence, # Pass determined val for fractal 2
+            fractal2_power_or_sequence=fractal2_power_or_sequence,
             fractal2_iter=fractal2_iter_val,
-            lyapunov_seq2=lyapunov_seq2_val, # Pass specific lyapunov seq for fractal 2
+            lyapunov_seq2=lyapunov_seq2_val,
             fractal_blend_mode=fractal_blend_mode,
             fractal_blend_factor=fractal_blend_factor_val
         )
@@ -907,6 +893,10 @@ class FractalExplorer(QWidget):
         self.current_animation_step = 0
         self.total_animation_steps = steps
 
+        # Lock the animation frame size at the start
+        self.animation_width = self.image_label.width()
+        self.animation_height = self.image_label.height()
+
         self.start_animation_button.setEnabled(False)
         self.stop_animation_button.setEnabled(True)
         self.export_animation_button.setEnabled(False) # Disable during animation
@@ -995,44 +985,42 @@ class FractalExplorer(QWidget):
             self.status_label.setText("No animation frames to export.")
             return
 
+        # Ensure all frames have the same shape
+        shapes = [frame.shape for frame in self.animation_frames]
+        if len(set(shapes)) > 1:
+            self.status_label.setText("Error: Not all animation frames have the same shape.")
+            return
+
         filename, _ = QFileDialog.getSaveFileName(
             self, "Export Animation", "",
             "GIF Files (*.gif);;MP4 Video Files (*.mp4);;All Files (*)"
         )
-
         if not filename:
             return
 
         self.status_label.setText(f"Exporting animation to {filename}...")
-        QApplication.processEvents() # Update UI
+        QApplication.processEvents()
 
         fps = self.animate_fps_slider.value()
-
         try:
-            # Placeholder for imageio logic:
-            # import imageio
-            # if filename.lower().endswith('.gif'):
-            #     imageio.mimsave(filename, self.animation_frames, fps=fps, subrectangles=True) # subrectangles for GIF optimization
-            # elif filename.lower().endswith('.mp4'):
-            #     imageio.mimsave(filename, self.animation_frames, fps=fps, macro_block_size=1) # macro_block_size for MP4
-            # else: # Try to guess from extension or default to GIF/MP4
-            #     self.status_label.setText("Unsupported file type. Please use .gif or .mp4")
-            #     return
+            if filename.lower().endswith('.gif'):
+                imageio.mimsave(filename, self.animation_frames, fps=fps, subrectangles=True)
+            elif filename.lower().endswith('.mp4'):
+                imageio.mimsave(filename, self.animation_frames, fps=fps, macro_block_size=1)
+            else:
+                self.status_label.setText("Unsupported file type. Please use .gif or .mp4")
+                return
 
-            # Simulate export for now
             QTimer.singleShot(2000, lambda: self.status_label.setText(f"Animation exported to {filename} (simulated)."))
             print(f"Simulated export: {len(self.animation_frames)} frames, FPS: {fps} to {filename}")
-            # End of placeholder
-
-            # self.status_label.setText(f"Animation successfully exported to {filename}.")
+            return
         except Exception as e:
             self.status_label.setText(f"Error exporting animation: {e}")
             print(f"Error exporting animation: {e}")
 
-        # Clear frames after export? Or keep them for another export?
-        # For now, let's keep them. User can re-animate to clear.
-        self.export_animation_button.setEnabled(True) # Re-enable after export attempt
+        self.export_animation_button.setEnabled(True)
 
+    # ...rest of the class unchanged for brevity...
 
 def set_dark_palette(app):
     palette = QPalette()

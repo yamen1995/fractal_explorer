@@ -96,6 +96,10 @@ COLORMAPS = {
 
 # --- Function to Apply Colormap ---
 def apply_colormap(arr, colormap_name='plasma'):
+    """
+    Apply a standard colormap to a 2D array.
+    Handles nan/inf and constant arrays robustly.
+    """
     arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
     min_val = arr.min()
     max_val = arr.max()
@@ -104,7 +108,7 @@ def apply_colormap(arr, colormap_name='plasma'):
     else:
         normalized = (arr - min_val) / (max_val - min_val)
     lut = COLORMAPS.get(colormap_name, COLORMAPS['plasma'])
-    indices = (normalized * (lut.shape[0] - 1)).astype(np.uint8)
+    indices = np.clip((normalized * (lut.shape[0] - 1)).astype(np.uint8), 0, lut.shape[0] - 1)
     return lut[indices]
 
 def blend_colormaps(
@@ -122,6 +126,7 @@ def blend_colormaps(
     nonlinear_power: used if blend_mode == 'nonlinear'
     segment_point: used if blend_mode == 'segment', in [0,1]
     """
+    arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
     min_val = arr.min()
     max_val = arr.max()
     if max_val - min_val < 1e-10:
@@ -130,9 +135,8 @@ def blend_colormaps(
         normalized = (arr - min_val) / (max_val - min_val)
     lut1 = COLORMAPS.get(colormap_name, COLORMAPS['plasma'])
     lut2 = COLORMAPS.get(colormap_2_name, COLORMAPS['viridis'])
-    # Compute indices for each colormap separately
-    indices1 = (normalized * (lut1.shape[0] - 1)).astype(np.uint8)
-    indices2 = (normalized * (lut2.shape[0] - 1)).astype(np.uint8)
+    indices1 = np.clip((normalized * (lut1.shape[0] - 1)).astype(np.uint8), 0, lut1.shape[0] - 1)
+    indices2 = np.clip((normalized * (lut2.shape[0] - 1)).astype(np.uint8), 0, lut2.shape[0] - 1)
     colors1 = lut1[indices1]
     colors2 = lut2[indices2]
 
@@ -148,8 +152,7 @@ def blend_colormaps(
     else:
         blended = colors1 * (1 - blend_factor) + colors2 * blend_factor
 
-    return blended.astype(np.uint8)
-
+    return np.clip(blended, 0, 255).astype(np.uint8)
 
 DEFAULT_LYAPUNOV_COLORS = {
     'positive_chaos_start': np.array([255, 255, 0], dtype=np.uint8),  # Yellow
@@ -184,67 +187,51 @@ def apply_lyapunov_colormap(lyapunov_exponents, custom_colors=None):
         colors.update(custom_colors)
 
     height, width = lyapunov_exponents.shape
-    # Initialize image to black. Points that don't fall into other categories will remain black.
     rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
 
     # --- Identify different regions based on exponent values ---
     is_divergent = ~np.isfinite(lyapunov_exponents) | (lyapunov_exponents == -np.inf)
+    finite_exp = np.copy(lyapunov_exponents)
+    finite_exp[is_divergent] = 0
 
-    # Create a working copy for masking, ensuring divergent points don't interfere
-    finite_exp_mask = np.copy(lyapunov_exponents)
-    finite_exp_mask[is_divergent] = 0 # Neutral value for points already classified as divergent
-
-    # Use a small epsilon for comparing floats to zero
     epsilon = 1e-9
-    is_positive = finite_exp_mask > epsilon
-    is_negative = finite_exp_mask < -epsilon
-    # is_strictly_zero = np.abs(finite_exp_mask) <= epsilon (and not divergent)
-
-    # --- Apply colors to regions ---
+    is_positive = finite_exp > epsilon
+    is_negative = finite_exp < -epsilon
 
     # 1. Divergent points
     rgb_image[is_divergent] = colors['divergent']
 
     # 2. Positive exponents (chaotic)
     if np.any(is_positive):
-        pos_exponents = lyapunov_exponents[is_positive] # Use original values for gradient
+        pos_exponents = lyapunov_exponents[is_positive]
         min_pos = pos_exponents.min()
         max_pos = pos_exponents.max()
-
-        if max_pos - min_pos < epsilon: # Avoid division by zero if all positives are effectively same
-            norm_pos = np.zeros_like(pos_exponents) # Map all to 'positive_chaos_start'
+        if max_pos - min_pos < epsilon:
+            norm_pos = np.zeros_like(pos_exponents)
         else:
-            norm_pos = (pos_exponents - min_pos) / (max_pos - min_pos) # Normalize 0 to 1
-
-        for i in range(3): # R, G, B
-            rgb_image[is_positive, i] = (colors['positive_chaos_start'][i] * (1 - norm_pos) +
-                                         colors['positive_chaos_end'][i] * norm_pos).astype(np.uint8)
+            norm_pos = (pos_exponents - min_pos) / (max_pos - min_pos)
+        rgb_image[is_positive] = (
+            colors['positive_chaos_start'] * (1 - norm_pos)[:, None] +
+            colors['positive_chaos_end'] * norm_pos[:, None]
+        ).astype(np.uint8)
 
     # 3. Negative exponents (ordered)
     if np.any(is_negative):
-        neg_exponents = lyapunov_exponents[is_negative] # Use original values for gradient
-
-        # Normalize based on absolute values:
-        # Exponents closest to zero (e.g., -0.01, smallest absolute value) -> 'negative_order_start'
-        # Exponents furthest from zero (e.g., -2.0, largest absolute value) -> 'negative_order_end'
+        neg_exponents = lyapunov_exponents[is_negative]
         abs_neg_exponents = np.abs(neg_exponents)
         min_neg_abs = abs_neg_exponents.min()
         max_neg_abs = abs_neg_exponents.max()
-
-        if max_neg_abs - min_neg_abs < epsilon: # If all negatives are effectively same magnitude
-            norm_neg_abs = np.zeros_like(abs_neg_exponents) # Map all to 'negative_order_start'
+        if max_neg_abs - min_neg_abs < epsilon:
+            norm_neg_abs = np.zeros_like(abs_neg_exponents)
         else:
-            # norm = 0 for min_neg_abs (closest to zero), 1 for max_neg_abs (furthest from zero)
             norm_neg_abs = (abs_neg_exponents - min_neg_abs) / (max_neg_abs - min_neg_abs)
+        rgb_image[is_negative] = (
+            colors['negative_order_start'] * (1 - norm_neg_abs)[:, None] +
+            colors['negative_order_end'] * norm_neg_abs[:, None]
+        ).astype(np.uint8)
 
-        for i in range(3): # R, G, B
-            rgb_image[is_negative, i] = (colors['negative_order_start'][i] * (1 - norm_neg_abs) +
-                                         colors['negative_order_end'][i] * norm_neg_abs).astype(np.uint8)
-
-    # Points that are finite, not positive (<= epsilon), not negative (>= -epsilon), and not divergent
-    # are effectively "zero" exponents. They will remain black as per initialization.
-    # If a specific color for zero is desired, it can be added here:
+    # Optionally, color near-zero exponents (not divergent, not positive, not negative)
     # is_zero_region = ~is_divergent & ~is_positive & ~is_negative
-    # rgb_image[is_zero_region] = np.array([128, 128, 128], dtype=np.uint8) # e.g., Gray
+    # rgb_image[is_zero_region] = np.array([128, 128, 128], dtype=np.uint8) # Gray
 
     return rgb_image

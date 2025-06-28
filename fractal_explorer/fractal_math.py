@@ -13,12 +13,13 @@ JULIA_PRESETS = [
 
 # --- Fractal Calculation Functions ---
 
-@njit
+@njit(cache=True, fastmath=True)
 def lyapunov_exponent(sequence, a, b, maxiter, warmup=100):
     """
     Calculates the Lyapunov exponent for a given sequence and parameters a, b.
     Sequence should be a string like "ABAB".
     'A' corresponds to parameter 'a', 'B' to 'b'.
+    Returns -np.inf for invalid or diverged points.
     """
     x = 0.5  # Starting value for x, must be in (0,1)
     lyap_sum = 0.0
@@ -28,17 +29,17 @@ def lyapunov_exponent(sequence, a, b, maxiter, warmup=100):
     for i in range(warmup):
         r = a if sequence[i % seq_len] == 'A' else b
         x = r * x * (1.0 - x)
-        if x <= 0 or x >= 1: # Bifurcation or invalid state
-            return -np.inf # Typically represented as very dark color
+        if x <= 0 or x >= 1:
+            return -np.inf
 
     # Main calculation loop
     for i in range(maxiter):
         r = a if sequence[(i + warmup) % seq_len] == 'A' else b
         x = r * x * (1.0 - x)
         if x <= 0 or x >= 1:
-             return -np.inf
+            return -np.inf
         derivative = r * (1.0 - 2.0 * x)
-        if derivative == 0: # Avoid log(0)
+        if derivative == 0:
             return -np.inf
         lyap_sum += np.log(abs(derivative))
 
@@ -46,18 +47,19 @@ def lyapunov_exponent(sequence, a, b, maxiter, warmup=100):
         return 0.0
     return lyap_sum / maxiter
 
-@njit
-def fractal_smooth(c, maxiter, fractal_type, power, constant_c=0j, lyapunov_warmup=100):
+@njit(cache=True, fastmath=True)
+def fractal_smooth(c, maxiter, fractal_type, power, constant_c=0j):
     """
     Compute the smooth iteration count for a given point in the complex plane.
+    Returns a float (iteration count, possibly fractional).
     """
     if fractal_type == 1:  # Julia
         z = c
     else:
-        z = 0j # Mandelbrot, Burning Ship, Tricorn, etc. start with z=0
+        z = 0j  # Mandelbrot, Burning Ship, Tricorn, etc.
 
     for n in range(maxiter):
-        if abs(z) > 2: # Escape condition for complex fractals
+        if abs(z) > 2:
             absz = abs(z)
             if absz < 1e-12:
                 absz = 1e-12
@@ -66,36 +68,29 @@ def fractal_smooth(c, maxiter, fractal_type, power, constant_c=0j, lyapunov_warm
                 log2_absz = 1e-12
             return n + 1 - np.log(log2_absz)
 
+        # Fractal type switch
         if fractal_type == 0:  # Mandelbrot
             z = z**power + c
         elif fractal_type == 1:  # Julia
             z = z**power + constant_c
         elif fractal_type == 2:  # Burning Ship
-            z_real_abs = abs(z.real)
-            z_imag_abs = abs(z.imag)
-            z = complex(z_real_abs, z_imag_abs)**power + c
+            z = complex(abs(z.real), abs(z.imag))**power + c
         elif fractal_type == 3:  # Tricorn
             z = np.conj(z)**power + c
         elif fractal_type == 4:  # Celtic Mandelbrot
-            z_real_abs = abs(z.real)
-            z = complex(z_real_abs, z.imag)**power + c
+            z = complex(abs(z.real), z.imag)**power + c
         elif fractal_type == 5:  # Buffalo
-            z_real_abs = abs(z.real)
-            z_imag_abs = abs(z.imag)
             z = (complex(z.real, z.imag)**2 - complex(z.real, -z.imag)**2) / 2
             z = complex(abs(z.real), abs(z.imag))
             z = z**power + c
         elif fractal_type == 7:  # Mandelbar
             z = np.conj(z)**power + c
         elif fractal_type == 8:  # Perpendicular Burning Ship
-            z_real_abs = abs(z.real)
-            z_imag_abs = abs(z.imag)
-            z = complex(z_imag_abs, z_real_abs)**power + c
+            z = complex(abs(z.imag), abs(z.real))**power + c
         elif fractal_type == 9:  # Perpendicular Buffalo
-            z_real_abs = abs(z.real)
-            z_imag_abs = abs(z.imag)
             z = complex(abs(z.imag), abs(z.real))
             z = z**power + c
+        # Add more fractal types here as needed
 
     return maxiter
 
@@ -109,6 +104,7 @@ def compute_fractal(
     Compute a single fractal array.
     For Lyapunov, min_x, max_x are 'a' range, min_y, max_y are 'b' range.
     power_or_sequence is the exponent for complex fractals, or the sequence string for Lyapunov.
+    Returns a 2D numpy array of floats.
     """
     pixels = np.zeros((height, width), dtype=np.float64)
 
@@ -117,9 +113,9 @@ def compute_fractal(
             val1 = min_x + x_idx * (max_x - min_x) / width
             val2 = min_y + y_idx * (max_y - min_y) / height
 
-            if fractal_type == 6: # Lyapunov
+            if fractal_type == 6:  # Lyapunov
                 pixels[y_idx, x_idx] = lyapunov_exponent(lyapunov_seq, val1, val2, maxiter, lyapunov_warmup)
-            else: # Complex fractals
+            else:
                 c = val1 + val2 * 1j
                 pixels[y_idx, x_idx] = fractal_smooth(c, maxiter, fractal_type, power_or_sequence, constant_c)
 
@@ -137,7 +133,7 @@ def compute_blended_fractal(
 ):
     """
     Compute two fractal arrays with different parameters for blending.
-    Returns: pixels1, pixels2
+    Returns: pixels1, pixels2 (both 2D numpy arrays)
     """
     pixels1 = np.zeros((height, width), dtype=np.float64)
     pixels2 = np.zeros((height, width), dtype=np.float64)
@@ -166,7 +162,7 @@ def compute_blended_fractal(
 
 def blend_fractals_mask(pixels1, pixels2, blend_factor=0.5):
     """
-    Weighted influence: output = (1-blend_factor)*pixels1 + blend_factor*pixels2
+    Weighted blend: output = (1-blend_factor)*pixels1 + blend_factor*pixels2
     """
     return (1 - blend_factor) * pixels1 + blend_factor * pixels2
 
