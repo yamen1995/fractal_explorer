@@ -348,6 +348,7 @@ class FractalExplorer(QWidget):
         self.current_animation_step = 0
         self.total_animation_steps = 0
         self.animation_param_values = []
+        self.animation_frames = [] # To store frames for export
 
         animation_group_layout = QHBoxLayout()
         self.animate_variable_combo = QComboBox()
@@ -373,6 +374,9 @@ class FractalExplorer(QWidget):
         self.stop_animation_button = QPushButton("Stop Animation")
         self.stop_animation_button.clicked.connect(self.stop_animation)
         self.stop_animation_button.setEnabled(False)
+        self.export_animation_button = QPushButton("Export Animation")
+        self.export_animation_button.clicked.connect(self.export_animation)
+        self.export_animation_button.setEnabled(False) # Enabled when frames are available
 
         animation_group_layout.addWidget(QLabel("Animate:"))
         animation_group_layout.addWidget(self.animate_variable_combo)
@@ -387,6 +391,7 @@ class FractalExplorer(QWidget):
         animation_group_layout.addWidget(self.animate_fps_label)
         animation_group_layout.addWidget(self.start_animation_button)
         animation_group_layout.addWidget(self.stop_animation_button)
+        animation_group_layout.addWidget(self.export_animation_button)
         animation_group_layout.addStretch(1)
 
         main_layout.addLayout(animation_group_layout) # Add animation controls to main layout
@@ -455,7 +460,23 @@ class FractalExplorer(QWidget):
     # --- UI Event Handlers ---
     def fractal_set_changed(self, idx):
         self.fractal_type = idx
-        self.update_fractal_controls_visibility() # Updated to new central visibility function
+        if self.fractal_type == 6:  # Lyapunov
+            self.min_x, self.max_x = 2.0, 4.0
+            self.min_y, self.max_y = 2.0, 4.0
+            self.zoom_factor = 1.0
+        else:
+            # Reset to default Mandelbrot-like view if not Lyapunov,
+            # or if switching from Lyapunov to something else.
+            # A more advanced approach might store last view per fractal type.
+            is_julia = (self.fractal_type == 1)
+            if not is_julia: # Julia has its own C constant, view might be specific
+                self.min_x, self.max_x = -2.0, 1.0
+                self.min_y, self.max_y = -1.5, 1.5
+                self.zoom_factor = 1.0
+            # If it's Julia, we let the existing view parameters remain,
+            # as they are often specific to the chosen Julia constant.
+
+        self.update_fractal_controls_visibility()
         self.start_render()
 
     def update_fractal_controls_visibility(self):
@@ -579,15 +600,15 @@ class FractalExplorer(QWidget):
                 self.fractal2_lyapunov_seq_input.setText(fractal2_power_or_sequence)
             lyapunov_seq2_val = fractal2_power_or_sequence
         else: # Complex fractal for fractal 2
-            # Attempt to parse power from the shared input, assuming it's for complex if not Lyapunov
             try:
-                if isinstance(ast.literal_eval(self.fractal2_power_input.text()), (int, float, complex)):
-                     fractal2_power_or_sequence = ast.literal_eval(self.fractal2_power_input.text())
-                else: # Fallback if not easily parsed as number
-                    fractal2_power_or_sequence = 2.0
-            except: # Broad except for parsing errors
-                fractal2_power_or_sequence = 2.0
-            power2_val = fractal2_power_or_sequence
+                value = ast.literal_eval(self.fractal2_power_input.text())
+                if isinstance(value, (int, float, complex)):
+                    fractal2_power_or_sequence = complex(value) # Ensure it's complex for consistency
+                else:
+                    fractal2_power_or_sequence = 2.0 + 0j # Default complex
+            except (ValueError, SyntaxError, TypeError): # More specific exceptions
+                fractal2_power_or_sequence = 2.0 + 0j # Default complex
+            power2_val = fractal2_power_or_sequence # This var is not actually used elsewhere it seems
 
 
         self.status_label.setText("Rendering...")
@@ -666,6 +687,22 @@ class FractalExplorer(QWidget):
     def handle_image_ready(self, image_array, params):
         self.current_image = image_array
         self.last_render_params = params
+
+        if self.animation_timer.isActive():
+            # Check if we are still expecting frames for the current animation sequence
+            if len(self.animation_frames) < self.total_animation_steps:
+                self.animation_frames.append(np.copy(image_array))
+                self.status_label.setText(f"Animation: Frame {len(self.animation_frames)}/{self.total_animation_steps} captured.")
+
+            # Increment step counter *after* processing the frame for the *previous* step number
+            # This means self.current_animation_step is the *next* step to be prepared by animation_step()
+            self.current_animation_step += 1
+
+            if self.current_animation_step >= self.total_animation_steps:
+                # This check is after incrementing, so if current_step == total_steps, all frames are done.
+                # This will be caught by animation_step's initial check or stop_animation called from render_finished
+                pass # Let animation_step or render_finished handle the actual stop
+
         self.update_image_display()
 
     def update_image_display(self):
@@ -697,6 +734,13 @@ class FractalExplorer(QWidget):
         self.progress_bar.setVisible(False)
         self.zoom_label.setText(f"Zoom: {self.zoom_factor:.1f}x")
 
+        if self.animation_timer.isActive() and \
+           self.current_animation_step >= self.total_animation_steps and \
+           len(self.animation_frames) == self.total_animation_steps:
+            # Animation was active, all steps have been prepared by animation_step,
+            # and all frames have been captured by handle_image_ready.
+            self.stop_animation()
+
     def save_image(self):
         if self.current_image is None:
             return
@@ -719,8 +763,13 @@ class FractalExplorer(QWidget):
         qimage.save(filename)
 
     def reset_view(self):
-        self.min_x, self.max_x = -2.0, 1.0
-        self.min_y, self.max_y = -1.5, 1.5
+        current_fractal_type = self.fractal_combo.currentIndex()
+        if current_fractal_type == 6: # Lyapunov
+            self.min_x, self.max_x = 2.0, 4.0
+            self.min_y, self.max_y = 2.0, 4.0
+        else: # Default for Mandelbrot and other complex fractals
+            self.min_x, self.max_x = -2.0, 1.0
+            self.min_y, self.max_y = -1.5, 1.5
         self.zoom_factor = 1.0
         self.start_render()
 
@@ -826,11 +875,13 @@ class FractalExplorer(QWidget):
             return
 
         self.animation_param_values = np.linspace(start_val, end_val, steps)
+        self.animation_frames = [] # Clear previous frames
         self.current_animation_step = 0
         self.total_animation_steps = steps
 
         self.start_animation_button.setEnabled(False)
         self.stop_animation_button.setEnabled(True)
+        self.export_animation_button.setEnabled(False) # Disable during animation
         self.set_animation_controls_enabled(False)
 
         fps = self.animate_fps_slider.value()
@@ -841,54 +892,49 @@ class FractalExplorer(QWidget):
         self.animation_timer.stop()
         self.start_animation_button.setEnabled(True)
         self.stop_animation_button.setEnabled(False)
+        if self.animation_frames: # Enable export if frames were captured
+            self.export_animation_button.setEnabled(True)
         self.set_animation_controls_enabled(True)
-        self.status_label.setText("Animation stopped.")
+        self.status_label.setText("Animation stopped." + (f" {len(self.animation_frames)} frames captured." if self.animation_frames else ""))
 
     def animation_step(self):
+        if self.worker and self.worker.isRunning():
+            # self.status_label.setText(f"Animation: Waiting for render of step {self.current_animation_step + 1}...")
+            return # Wait for current render to finish before starting next step's logic
+
         if self.current_animation_step >= self.total_animation_steps:
-            self.stop_animation()
+            # This condition should ideally be primarily handled in handle_image_ready or render_finished
+            # after the last frame is processed.
+            # If reached here, it means timer fired after last step was initiated.
+            if not (self.worker and self.worker.isRunning()):
+                self.stop_animation()
             return
 
+        self.status_label.setText(f"Animation: Preparing step {self.current_animation_step + 1}/{self.total_animation_steps}")
         current_val = self.animation_param_values[self.current_animation_step]
         param_to_animate = self.animate_variable_combo.currentText()
 
+        # Update parameters based on current_val
         if param_to_animate == "Julia C Real":
-            current_c = self.get_julia_c()
             self.julia_real_input.setText(f"{current_val:.8f}")
-            # Ensure Julia combo is set to custom to enable editing
-            if self.fractal_combo.currentIndex() == 1: # Julia
-                 self.julia_combo.setCurrentIndex(0) # "Custom"
+            if self.fractal_combo.currentIndex() == 1: self.julia_combo.setCurrentIndex(0)
         elif param_to_animate == "Julia C Imag":
-            current_c = self.get_julia_c()
             self.julia_imag_input.setText(f"{current_val:.8f}")
-            if self.fractal_combo.currentIndex() == 1: # Julia
-                self.julia_combo.setCurrentIndex(0) # "Custom"
+            if self.fractal_combo.currentIndex() == 1: self.julia_combo.setCurrentIndex(0)
         elif param_to_animate == "Exponent Real":
-            # For Exponent Real, we don't force complex mode if it's not set.
-            # If it is complex, we keep the imaginary part.
             current_exp = self.get_exponent()
-            if isinstance(current_exp, complex):
-                self.exponent_input.setText(f"{current_val:.4f}{current_exp.imag:+.4f}j")
-            else:
-                self.exponent_input.setText(f"{current_val:.4f}")
+            if isinstance(current_exp, complex): self.exponent_input.setText(f"{current_val:.4f}{current_exp.imag:+.4f}j")
+            else: self.exponent_input.setText(f"{current_val:.4f}")
         elif param_to_animate == "Exponent Imag":
-            # Ensure complex mode is checked if we animate imaginary part
             self.complex_mode_checkbox.setChecked(True)
-            # Now that complex mode is set, get_exponent will correctly interpret existing complex parts
             current_exp = self.get_exponent()
-            if isinstance(current_exp, complex):
-                 self.exponent_input.setText(f"{current_exp.real:.4f}{current_val:+.4f}j")
-            else: # Was real (e.g. "2"), now make it complex by adding the animated imaginary part
-                 self.exponent_input.setText(f"{float(current_exp):.4f}{current_val:+.4f}j")
+            if isinstance(current_exp, complex): self.exponent_input.setText(f"{current_exp.real:.4f}{current_val:+.4f}j")
+            else: self.exponent_input.setText(f"{float(current_exp):.4f}{current_val:+.4f}j")
         elif param_to_animate == "Iterations":
             self.iter_slider.setValue(int(current_val))
-            # set_iterations will update self.maxiter and label
 
-        self.start_render() # Re-render with the new parameter
-        self.current_animation_step += 1
-        # Update progress or status if desired, e.g.,
-        # self.status_label.setText(f"Animation: Step {self.current_animation_step}/{self.total_animation_steps}")
-
+        self.start_render() # This will render the frame for self.current_animation_step
+        # self.current_animation_step is incremented in handle_image_ready AFTER frame is stored.
 
     def set_animation_controls_enabled(self, enabled):
         """Enable/disable controls that should not be changed during animation."""
@@ -915,6 +961,49 @@ class FractalExplorer(QWidget):
         self.animate_end_input.setEnabled(enabled)
         self.animate_steps_input.setEnabled(enabled)
         self.animate_fps_slider.setEnabled(enabled)
+
+    def export_animation(self):
+        if not self.animation_frames:
+            self.status_label.setText("No animation frames to export.")
+            return
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export Animation", "",
+            "GIF Files (*.gif);;MP4 Video Files (*.mp4);;All Files (*)"
+        )
+
+        if not filename:
+            return
+
+        self.status_label.setText(f"Exporting animation to {filename}...")
+        QApplication.processEvents() # Update UI
+
+        fps = self.animate_fps_slider.value()
+
+        try:
+            # Placeholder for imageio logic:
+            # import imageio
+            # if filename.lower().endswith('.gif'):
+            #     imageio.mimsave(filename, self.animation_frames, fps=fps, subrectangles=True) # subrectangles for GIF optimization
+            # elif filename.lower().endswith('.mp4'):
+            #     imageio.mimsave(filename, self.animation_frames, fps=fps, macro_block_size=1) # macro_block_size for MP4
+            # else: # Try to guess from extension or default to GIF/MP4
+            #     self.status_label.setText("Unsupported file type. Please use .gif or .mp4")
+            #     return
+
+            # Simulate export for now
+            QTimer.singleShot(2000, lambda: self.status_label.setText(f"Animation exported to {filename} (simulated)."))
+            print(f"Simulated export: {len(self.animation_frames)} frames, FPS: {fps} to {filename}")
+            # End of placeholder
+
+            # self.status_label.setText(f"Animation successfully exported to {filename}.")
+        except Exception as e:
+            self.status_label.setText(f"Error exporting animation: {e}")
+            print(f"Error exporting animation: {e}")
+
+        # Clear frames after export? Or keep them for another export?
+        # For now, let's keep them. User can re-animate to clear.
+        self.export_animation_button.setEnabled(True) # Re-enable after export attempt
 
 
 def set_dark_palette(app):
