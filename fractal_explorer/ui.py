@@ -182,7 +182,10 @@ class FractalExplorer(QWidget):
         self.cmap_combo.setCurrentText(self.colormap_name)
         self.cmap_combo.currentTextChanged.connect(self.set_colormap)
         self.fractal_combo = QComboBox()
-        self.fractal_combo.addItems(["Mandelbrot", "Julia", "Burning Ship", "Tricorn", "Celtic Mandelbrot", "Buffalo", "Lyapunov"]) # Added Lyapunov
+        self.fractal_combo.addItems([
+            "Mandelbrot", "Julia", "Burning Ship", "Tricorn", "Celtic Mandelbrot",
+            "Buffalo", "Lyapunov", "Mandelbar", "Perpendicular Burning Ship", "Perpendicular Buffalo"
+        ])
         self.fractal_combo.currentIndexChanged.connect(self.fractal_set_changed)
 
         # Julia parameters
@@ -283,7 +286,10 @@ class FractalExplorer(QWidget):
         self.fractal_blend_mode_combo.addItems(['mask', 'alternating'])
         self.fractal_blend_mode_combo.currentTextChanged.connect(self.start_render)
         self.fractal2_combo = QComboBox()
-        self.fractal2_combo.addItems(["Mandelbrot", "Julia", "Burning Ship", "Tricorn", "Celtic Mandelbrot", "Buffalo", "Lyapunov"]) # Added Lyapunov
+        self.fractal2_combo.addItems([
+            "Mandelbrot", "Julia", "Burning Ship", "Tricorn", "Celtic Mandelbrot",
+            "Buffalo", "Lyapunov", "Mandelbar", "Perpendicular Burning Ship", "Perpendicular Buffalo"
+        ])
         self.fractal2_combo.setCurrentIndex(0)
         self.fractal2_combo.currentIndexChanged.connect(self.update_fractal_blend_params)
 
@@ -335,6 +341,56 @@ class FractalExplorer(QWidget):
         main_layout.addLayout(fractal_layout)
         main_layout.addLayout(blend_layout)
         main_layout.addLayout(fractal_blend_layout)
+
+        # --- Animation Controls ---
+        self.animation_timer = QTimer(self)
+        self.animation_timer.timeout.connect(self.animation_step)
+        self.current_animation_step = 0
+        self.total_animation_steps = 0
+        self.animation_param_values = []
+
+        animation_group_layout = QHBoxLayout()
+        self.animate_variable_combo = QComboBox()
+        self.animate_variable_combo.addItems([
+            "Julia C Real", "Julia C Imag", "Exponent Real", "Exponent Imag", "Iterations"
+        ])
+        self.animate_start_input = QLineEdit("0")
+        self.animate_start_input.setFixedWidth(70)
+        self.animate_end_input = QLineEdit("1")
+        self.animate_end_input.setFixedWidth(70)
+        self.animate_steps_input = QLineEdit("100")
+        self.animate_steps_input.setFixedWidth(50)
+        self.animate_fps_slider = QSlider(Qt.Horizontal)
+        self.animate_fps_slider.setRange(1, 60) # FPS
+        self.animate_fps_slider.setValue(10)
+        self.animate_fps_slider.setFixedWidth(100)
+        self.animate_fps_label = QLabel("10 FPS")
+        self.animate_fps_slider.valueChanged.connect(
+            lambda val: self.animate_fps_label.setText(f"{val} FPS")
+        )
+        self.start_animation_button = QPushButton("Start Animation")
+        self.start_animation_button.clicked.connect(self.start_animation)
+        self.stop_animation_button = QPushButton("Stop Animation")
+        self.stop_animation_button.clicked.connect(self.stop_animation)
+        self.stop_animation_button.setEnabled(False)
+
+        animation_group_layout.addWidget(QLabel("Animate:"))
+        animation_group_layout.addWidget(self.animate_variable_combo)
+        animation_group_layout.addWidget(QLabel("Start:"))
+        animation_group_layout.addWidget(self.animate_start_input)
+        animation_group_layout.addWidget(QLabel("End:"))
+        animation_group_layout.addWidget(self.animate_end_input)
+        animation_group_layout.addWidget(QLabel("Steps:"))
+        animation_group_layout.addWidget(self.animate_steps_input)
+        animation_group_layout.addWidget(QLabel("Speed:"))
+        animation_group_layout.addWidget(self.animate_fps_slider)
+        animation_group_layout.addWidget(self.animate_fps_label)
+        animation_group_layout.addWidget(self.start_animation_button)
+        animation_group_layout.addWidget(self.stop_animation_button)
+        animation_group_layout.addStretch(1)
+
+        main_layout.addLayout(animation_group_layout) # Add animation controls to main layout
+
         main_layout.addLayout(status_layout)
         main_layout.addWidget(self.progress_bar)
         main_layout.addWidget(credit_label)
@@ -755,6 +811,111 @@ class FractalExplorer(QWidget):
         self.update_fractal_controls_visibility() # Update visibility of fractal 2 params
         # No direct re-render here
         pass
+
+    # --- Animation Methods ---
+    def start_animation(self):
+        try:
+            start_val = float(self.animate_start_input.text())
+            end_val = float(self.animate_end_input.text())
+            steps = int(self.animate_steps_input.text())
+            if steps <= 0:
+                self.status_label.setText("Animation steps must be positive.")
+                return
+        except ValueError:
+            self.status_label.setText("Invalid animation parameters.")
+            return
+
+        self.animation_param_values = np.linspace(start_val, end_val, steps)
+        self.current_animation_step = 0
+        self.total_animation_steps = steps
+
+        self.start_animation_button.setEnabled(False)
+        self.stop_animation_button.setEnabled(True)
+        self.set_animation_controls_enabled(False)
+
+        fps = self.animate_fps_slider.value()
+        self.animation_timer.start(int(1000 / fps)) # Timer interval in milliseconds
+        self.status_label.setText("Animation running...")
+
+    def stop_animation(self):
+        self.animation_timer.stop()
+        self.start_animation_button.setEnabled(True)
+        self.stop_animation_button.setEnabled(False)
+        self.set_animation_controls_enabled(True)
+        self.status_label.setText("Animation stopped.")
+
+    def animation_step(self):
+        if self.current_animation_step >= self.total_animation_steps:
+            self.stop_animation()
+            return
+
+        current_val = self.animation_param_values[self.current_animation_step]
+        param_to_animate = self.animate_variable_combo.currentText()
+
+        if param_to_animate == "Julia C Real":
+            current_c = self.get_julia_c()
+            self.julia_real_input.setText(f"{current_val:.8f}")
+            # Ensure Julia combo is set to custom to enable editing
+            if self.fractal_combo.currentIndex() == 1: # Julia
+                 self.julia_combo.setCurrentIndex(0) # "Custom"
+        elif param_to_animate == "Julia C Imag":
+            current_c = self.get_julia_c()
+            self.julia_imag_input.setText(f"{current_val:.8f}")
+            if self.fractal_combo.currentIndex() == 1: # Julia
+                self.julia_combo.setCurrentIndex(0) # "Custom"
+        elif param_to_animate == "Exponent Real":
+            # For Exponent Real, we don't force complex mode if it's not set.
+            # If it is complex, we keep the imaginary part.
+            current_exp = self.get_exponent()
+            if isinstance(current_exp, complex):
+                self.exponent_input.setText(f"{current_val:.4f}{current_exp.imag:+.4f}j")
+            else:
+                self.exponent_input.setText(f"{current_val:.4f}")
+        elif param_to_animate == "Exponent Imag":
+            # Ensure complex mode is checked if we animate imaginary part
+            self.complex_mode_checkbox.setChecked(True)
+            # Now that complex mode is set, get_exponent will correctly interpret existing complex parts
+            current_exp = self.get_exponent()
+            if isinstance(current_exp, complex):
+                 self.exponent_input.setText(f"{current_exp.real:.4f}{current_val:+.4f}j")
+            else: # Was real (e.g. "2"), now make it complex by adding the animated imaginary part
+                 self.exponent_input.setText(f"{float(current_exp):.4f}{current_val:+.4f}j")
+        elif param_to_animate == "Iterations":
+            self.iter_slider.setValue(int(current_val))
+            # set_iterations will update self.maxiter and label
+
+        self.start_render() # Re-render with the new parameter
+        self.current_animation_step += 1
+        # Update progress or status if desired, e.g.,
+        # self.status_label.setText(f"Animation: Step {self.current_animation_step}/{self.total_animation_steps}")
+
+
+    def set_animation_controls_enabled(self, enabled):
+        """Enable/disable controls that should not be changed during animation."""
+        self.iter_slider.setEnabled(enabled)
+        self.fractal_combo.setEnabled(enabled)
+        self.cmap_combo.setEnabled(enabled)
+        self.render_button.setEnabled(enabled)
+        # Julia controls
+        self.julia_combo.setEnabled(enabled and self.fractal_combo.currentIndex() == 1)
+        is_custom_julia = (self.julia_combo.currentIndex() == 0)
+        self.julia_real_input.setEnabled(enabled and self.fractal_combo.currentIndex() == 1 and is_custom_julia)
+        self.julia_imag_input.setEnabled(enabled and self.fractal_combo.currentIndex() == 1 and is_custom_julia)
+        # Exponent
+        self.exponent_input.setEnabled(enabled)
+        self.complex_mode_checkbox.setEnabled(enabled)
+        # Lyapunov
+        self.lyapunov_sequence_input.setEnabled(enabled)
+        # Blending controls could also be disabled if they interfere
+        self.blend_checkbox.setEnabled(enabled)
+        self.fractal_blend_checkbox.setEnabled(enabled)
+        # Animation parameter inputs
+        self.animate_variable_combo.setEnabled(enabled)
+        self.animate_start_input.setEnabled(enabled)
+        self.animate_end_input.setEnabled(enabled)
+        self.animate_steps_input.setEnabled(enabled)
+        self.animate_fps_slider.setEnabled(enabled)
+
 
 def set_dark_palette(app):
     palette = QPalette()

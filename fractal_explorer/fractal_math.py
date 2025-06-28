@@ -103,6 +103,20 @@ def fractal_smooth(c_or_ab, maxiter, fractal_type, power_or_sequence, constant_c
             # Let's stick to the provided structure: z = complex(abs(z.real), abs(z.imag)) then z**power + c
             z = complex(abs(z.real), abs(z.imag)) # Original line was z = complex(abs(z.real), abs(z.imag))
             z = z**power + c # Original line was z = z**power + c
+        elif fractal_type == 7:  # Mandelbar
+            z = np.conj(z)**power + c # Same as Tricorn but often used with power=2
+        elif fractal_type == 8:  # Perpendicular Burning Ship
+            z_real_abs = abs(z.real)
+            z_imag_abs = abs(z.imag)
+            # Key difference: components are swapped compared to Burning Ship before power
+            z = complex(z_imag_abs, z_real_abs)**power + c
+        elif fractal_type == 9:  # Perpendicular Buffalo
+            z_real_abs = abs(z.real)
+            z_imag_abs = abs(z.imag)
+            # Similar to Buffalo, but with components swapped
+            z = complex(abs(z.imag), abs(z.real)) # Swapped components
+            z = z**power + c
+
 
     return maxiter
 
