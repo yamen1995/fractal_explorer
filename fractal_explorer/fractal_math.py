@@ -47,27 +47,13 @@ def lyapunov_exponent(sequence, a, b, maxiter, warmup=100):
     return lyap_sum / maxiter
 
 @njit
-def fractal_smooth(c_or_ab, maxiter, fractal_type, power_or_sequence, constant_c=0j, lyapunov_warmup=100):
+def fractal_smooth(c, maxiter, fractal_type, power, constant_c=0j, lyapunov_warmup=100):
     """
-    Compute the smooth iteration count for a given point in the complex plane,
-    or the Lyapunov exponent if fractal_type indicates Lyapunov.
-    For Lyapunov, c_or_ab is a tuple (a, b) and power_or_sequence is the sequence string.
+    Compute the smooth iteration count for a given point in the complex plane.
     """
-    if fractal_type == 6: # Lyapunov
-        a, b_val = c_or_ab # c_or_ab contains (a,b) for Lyapunov
-        # power_or_sequence is the actual sequence string, but numba doesn't like strings in @njit yet directly for this kind of dispatch
-        # This will be handled by passing a pre-processed sequence or by moving string logic outside
-        # For now, this function expects power_or_sequence to be the sequence for Lyapunov.
-        # This is a placeholder, actual sequence handling needs to be done carefully with Numba.
-        # The string sequence is passed to lyapunov_exponent from compute_fractal.
-        # Here, power_or_sequence is not directly used if fractal_type is 6,
-        # as lyapunov_exponent is called from compute_fractal with the correct sequence.
-        # This is a bit of a workaround due to Numba's typing.
-        return lyapunov_exponent(power_or_sequence, a, b_val, maxiter, lyapunov_warmup)
-
     # Existing complex fractal logic
-    c = c_or_ab
-    power = power_or_sequence # For complex fractals, this is the exponent
+    # c = c_or_ab
+    # power = power_or_sequence # For complex fractals, this is the exponent
 
     if fractal_type == 1:  # Julia
         z = c
@@ -157,8 +143,6 @@ def compute_fractal(
             val2 = min_y + y_idx * (max_y - min_y) / height
 
             if fractal_type == 6: # Lyapunov
-                # val1 is 'a', val2 is 'b'
-                # power_or_sequence is the lyapunov_seq string
                 pixels[y_idx, x_idx] = lyapunov_exponent(lyapunov_seq, val1, val2, maxiter, lyapunov_warmup)
             else: # Complex fractals
                 c = val1 + val2 * 1j # val1 is real, val2 is imag
