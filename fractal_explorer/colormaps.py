@@ -96,9 +96,10 @@ COLORMAPS = {
 
 # --- Function to Apply Colormap ---
 def apply_colormap(arr, colormap_name='plasma'):
+    arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
     min_val = arr.min()
     max_val = arr.max()
-    if max_val - min_val < 1e-10:
+    if not np.isfinite(min_val) or not np.isfinite(max_val) or max_val - min_val < 1e-10:
         normalized = np.zeros_like(arr)
     else:
         normalized = (arr - min_val) / (max_val - min_val)

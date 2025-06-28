@@ -47,28 +47,10 @@ def lyapunov_exponent(sequence, a, b, maxiter, warmup=100):
     return lyap_sum / maxiter
 
 @njit
-def fractal_smooth(c_or_ab, maxiter, fractal_type, power_or_sequence, constant_c=0j, lyapunov_warmup=100):
+def fractal_smooth(c, maxiter, fractal_type, power, constant_c=0j, lyapunov_warmup=100):
     """
-    Compute the smooth iteration count for a given point in the complex plane,
-    or the Lyapunov exponent if fractal_type indicates Lyapunov.
-    For Lyapunov, c_or_ab is a tuple (a, b) and power_or_sequence is the sequence string.
+    Compute the smooth iteration count for a given point in the complex plane.
     """
-    if fractal_type == 6: # Lyapunov
-        a, b_val = c_or_ab # c_or_ab contains (a,b) for Lyapunov
-        # power_or_sequence is the actual sequence string, but numba doesn't like strings in @njit yet directly for this kind of dispatch
-        # This will be handled by passing a pre-processed sequence or by moving string logic outside
-        # For now, this function expects power_or_sequence to be the sequence for Lyapunov.
-        # This is a placeholder, actual sequence handling needs to be done carefully with Numba.
-        # The string sequence is passed to lyapunov_exponent from compute_fractal.
-        # Here, power_or_sequence is not directly used if fractal_type is 6,
-        # as lyapunov_exponent is called from compute_fractal with the correct sequence.
-        # This is a bit of a workaround due to Numba's typing.
-        return lyapunov_exponent(power_or_sequence, a, b_val, maxiter, lyapunov_warmup)
-
-    # Existing complex fractal logic
-    c = c_or_ab
-    power = power_or_sequence # For complex fractals, this is the exponent
-
     if fractal_type == 1:  # Julia
         z = c
     else:
@@ -76,14 +58,19 @@ def fractal_smooth(c_or_ab, maxiter, fractal_type, power_or_sequence, constant_c
 
     for n in range(maxiter):
         if abs(z) > 2: # Escape condition for complex fractals
-            return n + 1 - np.log(np.log2(abs(z)))
+            absz = abs(z)
+            if absz < 1e-12:
+                absz = 1e-12
+            log2_absz = np.log2(absz)
+            if log2_absz < 1e-12:
+                log2_absz = 1e-12
+            return n + 1 - np.log(log2_absz)
 
         if fractal_type == 0:  # Mandelbrot
             z = z**power + c
         elif fractal_type == 1:  # Julia
             z = z**power + constant_c
         elif fractal_type == 2:  # Burning Ship
-            # For complex power, ensure z is complex
             z_real_abs = abs(z.real)
             z_imag_abs = abs(z.imag)
             z = complex(z_real_abs, z_imag_abs)**power + c
@@ -93,37 +80,29 @@ def fractal_smooth(c_or_ab, maxiter, fractal_type, power_or_sequence, constant_c
             z_real_abs = abs(z.real)
             z = complex(z_real_abs, z.imag)**power + c
         elif fractal_type == 5:  # Buffalo
-            # This definition for Buffalo might vary. Using a common one.
             z_real_abs = abs(z.real)
             z_imag_abs = abs(z.imag)
-            # z = z*z - z_conj*z_conj + c  (Alternative if power is fixed at 2)
-            # Using the power parameter:
-            z = (complex(z.real, z.imag)**2 - complex(z.real, -z.imag)**2) / 2 # simplified z = i * Im(z^2)
-            # The definition of Buffalo can vary. A common one involves |Re(z)| and |Im(z)| before squaring.
-            # Let's stick to the provided structure: z = complex(abs(z.real), abs(z.imag)) then z**power + c
-            z = complex(abs(z.real), abs(z.imag)) # Original line was z = complex(abs(z.real), abs(z.imag))
-            z = z**power + c # Original line was z = z**power + c
+            z = (complex(z.real, z.imag)**2 - complex(z.real, -z.imag)**2) / 2
+            z = complex(abs(z.real), abs(z.imag))
+            z = z**power + c
         elif fractal_type == 7:  # Mandelbar
-            z = np.conj(z)**power + c # Same as Tricorn but often used with power=2
+            z = np.conj(z)**power + c
         elif fractal_type == 8:  # Perpendicular Burning Ship
             z_real_abs = abs(z.real)
             z_imag_abs = abs(z.imag)
-            # Key difference: components are swapped compared to Burning Ship before power
             z = complex(z_imag_abs, z_real_abs)**power + c
         elif fractal_type == 9:  # Perpendicular Buffalo
             z_real_abs = abs(z.real)
             z_imag_abs = abs(z.imag)
-            # Similar to Buffalo, but with components swapped
-            z = complex(abs(z.imag), abs(z.real)) # Swapped components
+            z = complex(abs(z.imag), abs(z.real))
             z = z**power + c
-
 
     return maxiter
 
 def compute_fractal(
     min_x, max_x, min_y, max_y, width, height,
-    maxiter, fractal_type, power_or_sequence, constant_c=0j, # power_or_sequence can be exponent or string
-    lyapunov_seq="AB", lyapunov_warmup=100, # Added lyapunov_seq
+    maxiter, fractal_type, power_or_sequence, constant_c=0j,
+    lyapunov_seq="AB", lyapunov_warmup=100,
     progress_callback=None
 ):
     """
@@ -133,23 +112,15 @@ def compute_fractal(
     """
     pixels = np.zeros((height, width), dtype=np.float64)
 
-    # Numba doesn't fully support passing string arguments into @njit functions in all contexts
-    # especially if they are to be used in control flow or as types.
-    # So, for Lyapunov, we prepare the sequence here if needed, or ensure lyapunov_exponent can take it.
-    # The current lyapunov_exponent is @njit and takes sequence as string. This should be okay.
-
-    for x_idx in range(width): # Represents 'a' for Lyapunov, or real part for complex
-        for y_idx in range(height): # Represents 'b' for Lyapunov, or imag part for complex
-
+    for x_idx in range(width):
+        for y_idx in range(height):
             val1 = min_x + x_idx * (max_x - min_x) / width
             val2 = min_y + y_idx * (max_y - min_y) / height
 
             if fractal_type == 6: # Lyapunov
-                # val1 is 'a', val2 is 'b'
-                # power_or_sequence is the lyapunov_seq string
                 pixels[y_idx, x_idx] = lyapunov_exponent(lyapunov_seq, val1, val2, maxiter, lyapunov_warmup)
             else: # Complex fractals
-                c = val1 + val2 * 1j # val1 is real, val2 is imag
+                c = val1 + val2 * 1j
                 pixels[y_idx, x_idx] = fractal_smooth(c, maxiter, fractal_type, power_or_sequence, constant_c)
 
         if progress_callback and x_idx % max(1, width // 100) == 0:
@@ -161,7 +132,7 @@ def compute_blended_fractal(
     min_x, max_x, min_y, max_y, width, height,
     maxiter1, fractal_type1, power_or_sequence1, constant_c1,
     maxiter2, fractal_type2, power_or_sequence2, constant_c2,
-    lyapunov_seq1="AB", lyapunov_seq2="AB", lyapunov_warmup=100, # Added lyapunov_seq
+    lyapunov_seq1="AB", lyapunov_seq2="AB", lyapunov_warmup=100,
     progress_callback=None
 ):
     """
@@ -176,15 +147,15 @@ def compute_blended_fractal(
             val1 = min_x + x_idx * (max_x - min_x) / width
             val2 = min_y + y_idx * (max_y - min_y) / height
 
-            if fractal_type1 == 6: # Lyapunov for fractal 1
+            if fractal_type1 == 6:
                 pixels1[y_idx, x_idx] = lyapunov_exponent(lyapunov_seq1, val1, val2, maxiter1, lyapunov_warmup)
-            else: # Complex fractal 1
+            else:
                 c1 = val1 + val2 * 1j
                 pixels1[y_idx, x_idx] = fractal_smooth(c1, maxiter1, fractal_type1, power_or_sequence1, constant_c1)
 
-            if fractal_type2 == 6: # Lyapunov for fractal 2
+            if fractal_type2 == 6:
                 pixels2[y_idx, x_idx] = lyapunov_exponent(lyapunov_seq2, val1, val2, maxiter2, lyapunov_warmup)
-            else: # Complex fractal 2
+            else:
                 c2 = val1 + val2 * 1j
                 pixels2[y_idx, x_idx] = fractal_smooth(c2, maxiter2, fractal_type2, power_or_sequence2, constant_c2)
 
