@@ -148,6 +148,7 @@ class FractalExplorer(QWidget):
         super().__init__()
         self.setWindowTitle("Fractal Explorer")
         self.setMinimumSize(800, 600)
+        self.setFocusPolicy(Qt.StrongFocus)
         self._init_state()
         self._setup_ui()
         QTimer.singleShot(100, self.start_render)
@@ -357,6 +358,23 @@ class FractalExplorer(QWidget):
         main_layout.addLayout(blend_layout)
         main_layout.addLayout(fractal_blend_layout)
 
+        # Coordinate input for direct navigation
+        self.center_x_input = QLineEdit(str((self.min_x + self.max_x) / 2))
+        self.center_x_input.setFixedWidth(120)
+        self.center_y_input = QLineEdit(str((self.min_y + self.max_y) / 2))
+        self.center_y_input.setFixedWidth(120)
+        self.goto_button = QPushButton("Go to (x, y)")
+        self.goto_button.clicked.connect(self.goto_coordinates)
+
+        coord_input_layout = QHBoxLayout()
+        coord_input_layout.addWidget(QLabel("Center X:"))
+        coord_input_layout.addWidget(self.center_x_input)
+        coord_input_layout.addWidget(QLabel("Center Y:"))
+        coord_input_layout.addWidget(self.center_y_input)
+        coord_input_layout.addWidget(self.goto_button)
+
+        main_layout.addLayout(coord_input_layout)
+        
         # --- Animation Controls ---
         self.animation_timer = QTimer(self)
         self.animation_timer.timeout.connect(self.animation_step)
@@ -748,6 +766,11 @@ class FractalExplorer(QWidget):
         self.progress_bar.setVisible(False)
         self.zoom_label.setText(f"Zoom: {self.zoom_factor:.1f}x")
 
+        center_x = (self.min_x + self.max_x) / 2
+        center_y = (self.min_y + self.max_y) / 2
+        self.center_x_input.setText(f"{center_x:.8f}")
+        self.center_y_input.setText(f"{center_y:.8f}")
+
         if self.animation_timer.isActive() and \
            self.current_animation_step >= self.total_animation_steps and \
            len(self.animation_frames) == self.total_animation_steps:
@@ -924,8 +947,7 @@ class FractalExplorer(QWidget):
             # This condition should ideally be primarily handled in handle_image_ready or render_finished
             # after the last frame is processed.
             # If reached here, it means timer fired after last step was initiated.
-            if not (self.worker and self.worker.isRunning()):
-                self.stop_animation()
+            # This will be caught by stop_animation if all frames are done
             return
 
         self.status_label.setText(f"Animation: Preparing step {self.current_animation_step + 1}/{self.total_animation_steps}")
@@ -1020,7 +1042,45 @@ class FractalExplorer(QWidget):
 
         self.export_animation_button.setEnabled(True)
 
-    # ...rest of the class unchanged for brevity...
+    def keyPressEvent(self, event):
+        pan_fraction = 0.1  # Move 10% of current view per keypress
+        dx = (self.max_x - self.min_x) * pan_fraction
+        dy = (self.max_y - self.min_y) * pan_fraction
+        moved = False
+
+        if event.key() == Qt.Key_Left:
+            self.min_x -= dx
+            self.max_x -= dx
+            moved = True
+        elif event.key() == Qt.Key_Right:
+            self.min_x += dx
+            self.max_x += dx
+            moved = True
+        elif event.key() == Qt.Key_Up:
+            self.min_y -= dy
+            self.max_y -= dy
+            moved = True
+        elif event.key() == Qt.Key_Down:
+            self.min_y += dy
+            self.max_y += dy
+            moved = True
+
+        if moved:
+            self.start_render()
+
+    def goto_coordinates(self):
+        try:
+            center_x = float(self.center_x_input.text())
+            center_y = float(self.center_y_input.text())
+            width = self.max_x - self.min_x
+            height = self.max_y - self.min_y
+            self.min_x = center_x - width / 2
+            self.max_x = center_x + width / 2
+            self.min_y = center_y - height / 2
+            self.max_y = center_y + height / 2
+            self.start_render()
+        except Exception:
+            self.status_label.setText("Invalid coordinates.")
 
 def set_dark_palette(app):
     palette = QPalette()
