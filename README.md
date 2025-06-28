@@ -9,11 +9,12 @@
 
 ## ✨ Features
 
-- ⚡ Real-time fractal exploration with smooth zooming and panning  
-- 🔄 Multiple fractal types: Mandelbrot, Julia, Burning Ship, and Tricorn  
-- 🎨 Customizable color maps with scientifically curated palettes  
-- 🧮 Adjustable iteration count for high-precision zooms  
-- 🖼️ High-resolution image export  
+- ⚡ Real-time fractal exploration with smooth zooming and panning
+- 🔄 Expanded fractal types: Mandelbrot, Julia, Burning Ship, Tricorn, Celtic Mandelbrot, Buffalo, Lyapunov, **Mandelbar**, **Perpendicular Burning Ship**, **Perpendicular Buffalo**
+- 🎨 Customizable color maps with scientifically curated palettes
+- ✨ **Real-time Fractal Evolution**: Animate fractal parameters (Julia C, Exponent, Iterations) to see them morph and change dynamically.
+- 🧮 Adjustable iteration count for high-precision zooms
+- 🖼️ High-resolution image export
 - 🧠 Hardware-optimized rendering using Numba  
 - 🧩 Modular structure for easy customization and extension  
 
@@ -83,10 +84,31 @@ dist/FractalExplorer.exe
 
 - **Fractal Set:**  
   Choose your fractal type:  
-  - `Mandelbrot` – the classic infinite set  
-  - `Julia` – shaped by complex constants  
-  - `Burning Ship` – sharp, flame-like structures  
-  - `Tricorn` – symmetrical and mirrored patterns  
+  - `Mandelbrot` – the classic infinite set
+  - `Julia` – shaped by complex constants
+  - `Burning Ship` – sharp, flame-like structures
+  - `Tricorn` – symmetrical and mirrored patterns
+  - `Celtic Mandelbrot` – variation with absolute value on real component
+  - `Buffalo` – variation with absolute values on both components
+  - `Lyapunov` – based on logistic map sequences
+  - `Mandelbar` – similar to Tricorn, using conjugate Z
+  - `Perpendicular Burning Ship` – variation with swapped real/imaginary components before power
+  - `Perpendicular Buffalo` – variation with swapped real/imaginary components before power
+
+---
+
+### 🎞️ Fractal Evolution
+
+- **Animate Parameters:** Bring fractals to life by animating key variables:
+  - `Julia C Real/Imag`: Watch Julia sets transform as their constant changes.
+  - `Exponent Real/Imag`: See how changing the power alters fractal shapes.
+  - `Iterations`: Observe the detail emerge or recede as iterations sweep through a range.
+- **Controls:**
+  - **Animate Dropdown:** Select the parameter you want to change over time.
+  - **Start/End Values:** Define the range for the selected parameter.
+  - **Steps:** Set the number of frames in your animation.
+  - **Speed (FPS):** Control the playback speed of the animation.
+  - **Start/Stop Animation:** Begin or halt the evolution process.
 
 ---
 
@@ -156,7 +178,19 @@ The code is organized for easy customization:
 - Extend the UI via `ui.py`
 
 ---
-## update 1
+## Update 1.1 (This Branch)
+- Branch: `feature/more-fractals-evolution-readme-version`
+- **New Fractal Types Added:**
+    - Mandelbar
+    - Perpendicular Burning Ship
+    - Perpendicular Buffalo
+- **New Feature: Real-time Fractal Evolution:**
+    - Animate parameters like Julia `c` (real/imaginary parts), exponent (real/imaginary parts), and iterations.
+    - UI controls for selecting parameter, start/end values, number of steps, and animation speed (FPS).
+- **Application Version Bumped:** to v1.1.
+- **README Updated:** Reflecting all new features and fractal types.
+
+## Previous Update (Update 1)
 - Branch: `feature/fractal-blending-and-exponents`
 1. New feature: Color map blending (linear, nonlinear, segment)
 2. New feature: Fractal blending (mask, alternating: checker, vertical, horizontal)
