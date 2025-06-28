@@ -11,7 +11,7 @@ from fractal_explorer.fractal_math import (
     compute_fractal, compute_blended_fractal,
     blend_fractals_mask, blend_fractals_alternating, JULIA_PRESETS
 )
-from .colormaps import apply_colormap, blend_colormaps, COLORMAPS
+from .colormaps import apply_colormap, blend_colormaps, COLORMAPS, apply_lyapunov_colormap
 
 # --- Worker Thread for Fractal Calculation ---
 class FractalWorker(QThread):
@@ -88,18 +88,46 @@ class FractalWorker(QThread):
             )
         if self._abort:
             return
-        if self.blend_enabled:
-            colored = blend_colormaps(
-                pixels,
-                self.colormap_name,
-                self.colormap_2_name,
-                self.blend_factor,
-                self.blend_mode,
-                self.nonlinear_power,
-                self.segment_point
-            )
-        else:
-            colored = apply_colormap(pixels, self.colormap_name)
+
+        # Determine the primary fractal type for special coloring
+        # In fractal blending mode, pixels is already a blended result of raw data.
+        # The special Lyapunov coloring will only apply if NOT in fractal_blend_enabled mode.
+        effective_fractal_type = self.fractal_type if not self.fractal_blend_enabled else -1 # -1 indicates no special handling
+
+        if effective_fractal_type == 6: # Lyapunov fractal, and not in fractal blending mode
+            if self.blend_enabled: # Colormap blending for Lyapunov
+                # Apply Lyapunov specific coloring as the first "layer"
+                rgb1 = apply_lyapunov_colormap(pixels)
+                # For the second "layer", apply a standard colormap to the raw Lyapunov data
+                # Need to handle normalization carefully if apply_colormap expects it
+                # apply_colormap handles its own normalization.
+                rgb2_data_copy = np.copy(pixels) # Ensure original data is not altered if apply_colormap modifies inplace
+                rgb2 = apply_colormap(rgb2_data_copy, self.colormap_2_name)
+
+                # Simple linear blend of the two RGB images
+                # Note: self.blend_mode, nonlinear_power, segment_point are not used in this direct RGB blend.
+                # This is a simplification. A more advanced blend might try to use those.
+                colored = rgb1 * (1 - self.blend_factor) + rgb2 * self.blend_factor
+                colored = np.clip(colored, 0, 255).astype(np.uint8)
+            else: # Single Lyapunov fractal, no colormap blending
+                colored = apply_lyapunov_colormap(pixels)
+        else: # Not a Lyapunov fractal (or in fractal blending mode, treating as standard)
+            if self.blend_enabled: # Standard colormap blending
+                colored = blend_colormaps(
+                    pixels,
+                    self.colormap_name,
+                    self.colormap_2_name,
+                    self.blend_factor,
+                    self.blend_mode,
+                    self.nonlinear_power,
+                    self.segment_point
+                )
+            else: # Standard single colormap
+                colored = apply_colormap(pixels, self.colormap_name)
+
+        if self._abort: # Check again in case coloring took time
+            return
+
         self.image_ready.emit(colored, (self.min_x, self.max_x, self.min_y, self.max_y))
         self.progress.emit(100)
         self.finished_signal.emit()
