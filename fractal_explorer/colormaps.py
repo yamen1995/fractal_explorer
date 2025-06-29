@@ -87,18 +87,32 @@ COLORMAPS = {
     'electric': np.array([
     [  0,   0,   0], [ 50,   0, 100], [150,   0, 255], [255,  50, 255],
     [255, 150, 100], [255, 255,   0], [255, 255, 255]
-    ], dtype=np.uint8),
+    ], dtype=np.uint8), # Source: Similar to some heatmaps
     'candy': np.array([
-    [255, 182, 193], [255, 192, 203], [221, 160, 221], [176, 224, 230],
-    [135, 206, 235], [144, 238, 144], [255, 250, 205]
+    [255, 182, 193], [255, 192, 203], [221, 160, 221], [176, 224, 230], # Light Pink, Pink, Plum, Powder Blue
+    [135, 206, 235], [144, 238, 144], [255, 250, 205]  # Sky Blue, Light Green, Lemon Chiffon
+    ], dtype=np.uint8), # Source: Pastel colors often used in "candy" themes
+    'grayscale': np.array([ # Added grayscale
+        [0, 0, 0], [51, 51, 51], [102, 102, 102], [153, 153, 153],
+        [204, 204, 204], [255, 255, 255]
     ], dtype=np.uint8)
 }
 
+def get_colormap(name, reverse=False):
+    """
+    Retrieves a colormap by name, with an option to reverse it.
+    """
+    cmap = COLORMAPS.get(name, COLORMAPS['plasma']) # Default to plasma if name not found
+    if reverse:
+        return cmap[::-1] # Return a reversed copy
+    return cmap
+
 # --- Function to Apply Colormap ---
-def apply_colormap(arr, colormap_name='plasma'):
+def apply_colormap(arr, colormap_name='plasma', reverse_cmap=False):
     """
     Apply a standard colormap to a 2D array.
     Handles nan/inf and constant arrays robustly.
+    Can apply a reversed version of the colormap.
     """
     arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
     min_val = arr.min()
@@ -107,8 +121,10 @@ def apply_colormap(arr, colormap_name='plasma'):
         normalized = np.zeros_like(arr)
     else:
         normalized = (arr - min_val) / (max_val - min_val)
-    lut = COLORMAPS.get(colormap_name, COLORMAPS['plasma'])
-    indices = np.clip((normalized * (lut.shape[0] - 1)).astype(np.uint8), 0, lut.shape[0] - 1)
+
+    lut = get_colormap(colormap_name, reverse=reverse_cmap) # Use new getter
+
+    indices = np.clip((normalized * (lut.shape[0] - 1)).astype(int), 0, lut.shape[0] - 1) # Use int for safety
     return lut[indices]
 
 def blend_colormaps(
@@ -118,13 +134,17 @@ def blend_colormaps(
     blend_factor=0.5,
     blend_mode='linear',
     nonlinear_power=2.0,
-    segment_point=0.5
+    segment_point=0.5,
+    reverse_cmap1=False, # New parameter for reversing first colormap
+    reverse_cmap2=False  # New parameter for reversing second colormap
 ):
     """
     Blend two colormaps using different modes.
     blend_mode: 'linear', 'nonlinear', 'segment'
     nonlinear_power: used if blend_mode == 'nonlinear'
     segment_point: used if blend_mode == 'segment', in [0,1]
+    reverse_cmap1: bool, if True, reverses the first colormap
+    reverse_cmap2: bool, if True, reverses the second colormap
     """
     arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
     min_val = arr.min()
@@ -133,10 +153,12 @@ def blend_colormaps(
         normalized = np.zeros_like(arr)
     else:
         normalized = (arr - min_val) / (max_val - min_val)
-    lut1 = COLORMAPS.get(colormap_name, COLORMAPS['plasma'])
-    lut2 = COLORMAPS.get(colormap_2_name, COLORMAPS['viridis'])
-    indices1 = np.clip((normalized * (lut1.shape[0] - 1)).astype(np.uint8), 0, lut1.shape[0] - 1)
-    indices2 = np.clip((normalized * (lut2.shape[0] - 1)).astype(np.uint8), 0, lut2.shape[0] - 1)
+
+    lut1 = get_colormap(colormap_name, reverse=reverse_cmap1) # Use getter with reverse flag
+    lut2 = get_colormap(colormap_2_name, reverse=reverse_cmap2) # Use getter with reverse flag
+
+    indices1 = np.clip((normalized * (lut1.shape[0] - 1)).astype(int), 0, lut1.shape[0] - 1) # Use int for safety
+    indices2 = np.clip((normalized * (lut2.shape[0] - 1)).astype(int), 0, lut2.shape[0] - 1) # Use int for safety
     colors1 = lut1[indices1]
     colors2 = lut2[indices2]
 

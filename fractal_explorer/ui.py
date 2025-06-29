@@ -3,9 +3,10 @@ import ast
 import imageio
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QFileDialog,
-    QSlider, QComboBox, QHBoxLayout, QProgressBar, QSizePolicy, QLineEdit, QCheckBox
+    QSlider, QComboBox, QHBoxLayout, QProgressBar, QSizePolicy, QLineEdit, QCheckBox,
+    QTabWidget, QGroupBox, QSpinBox, QDoubleSpinBox, QFormLayout
 )
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPalette
+from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPalette, QIcon
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint, QTimer, QRectF
 
 from fractal_explorer.fractal_math import (
@@ -27,7 +28,9 @@ class FractalWorker(QThread):
         blend_enabled=False, colormap_2_name='viridis', blend_factor=0.5, blend_mode='linear', nonlinear_power=2.0, segment_point=0.5,
         fractal_blend_enabled=False, fractal2_type=0, fractal2_power_or_sequence=2.0, fractal2_iter=500,
         fractal_blend_mode='mask', fractal_blend_factor=0.5,
-        lyapunov_seq2="AB"
+        lyapunov_seq2="AB",
+        use_mpmath_precision=False, mpmath_dps=30, # New precision parameters
+        cmap1_reversed=False, cmap2_reversed=False  # New colormap reversal flags
     ):
         super().__init__()
         self.min_x = min_x
@@ -57,10 +60,26 @@ class FractalWorker(QThread):
         self.fractal_blend_mode = fractal_blend_mode
         self.fractal_blend_factor = fractal_blend_factor
         self.lyapunov_seq2 = lyapunov_seq2
+        self.use_mpmath_precision = use_mpmath_precision
+        try:
+            self.mpmath_dps = int(mpmath_dps)
+        except ValueError:
+            self.mpmath_dps = 30 # Default DPS if conversion fails
+        self.cmap1_reversed = cmap1_reversed
+        self.cmap2_reversed = cmap2_reversed
+
 
     def run(self):
         def progress_callback(percent):
             self.progress.emit(percent)
+
+        # Convert mpmath_dps to int, defaulting if there's an issue.
+        try:
+            dps = int(self.mpmath_dps)
+        except ValueError:
+            dps = 30
+
+
         if self.fractal_blend_enabled:
             pixels1, pixels2 = compute_blended_fractal(
                 self.min_x, self.max_x, self.min_y, self.max_y,
@@ -70,6 +89,8 @@ class FractalWorker(QThread):
                 lyapunov_seq1=self.lyapunov_seq if self.fractal_type == 6 else "AB",
                 lyapunov_seq2=self.lyapunov_seq2 if self.fractal2_type == 6 else "AB",
                 lyapunov_warmup=self.lyapunov_warmup,
+                use_mpmath_precision=self.use_mpmath_precision, # Pass precision flag
+                mpmath_dps=dps,                                 # Pass DPS
                 progress_callback=progress_callback
             )
             if self.fractal_blend_mode == 'mask':
@@ -82,6 +103,8 @@ class FractalWorker(QThread):
                 self.width, self.height, self.maxiter,
                 self.fractal_type, self.power_or_sequence, self.julia_c,
                 lyapunov_seq=self.lyapunov_seq, lyapunov_warmup=self.lyapunov_warmup,
+                use_mpmath_precision=self.use_mpmath_precision, # Pass precision flag
+                mpmath_dps=dps,                                 # Pass DPS
                 progress_callback=progress_callback
             )
         if self._abort:
@@ -89,15 +112,43 @@ class FractalWorker(QThread):
 
         effective_fractal_type = self.fractal_type if not self.fractal_blend_enabled else -1
 
-        if effective_fractal_type == 6:
+        # Get reverse flags for colormaps from the main UI thread
+        # This requires the worker to have a reference to its parent FractalExplorer instance
+        # Or, these flags need to be passed during worker initialization
+        # For now, assuming they are passed or accessible via a hypothetical self.parent_widget
+        # This part needs careful implementation to ensure thread safety and proper access
+
+        # Placeholder: these would ideally be passed to __init__ or set via a method
+        # For the purpose of this diff, we'll simulate they are available on self
+        # In a real scenario, you'd add these to __init__ and store them
+        # e.g., self.reverse_cmap1 = parent_widget.cmap_reverse_checkbox.isChecked()
+        # For this diff, we'll assume they are passed and stored as:
+        # self.cmap1_reversed
+        # self.cmap2_reversed
+        # These would be set in __init__ based on parameters passed from FractalExplorer
+
+        # Simulating that these flags were passed to the worker's __init__
+        # and stored, e.g. self.cmap1_reversed = cmap1_reversed_flag
+        # For the diff, we need to ensure these are defined.
+        # Let's assume they are attributes of the worker, set from FractalExplorer during creation.
+        # We need to add them to __init__ first.
+        # (Already added to __init__ in a previous hypothetical step, let's assume they are:)
+        # self.cmap1_reversed (bool)
+        # self.cmap2_reversed (bool)
+
+        if effective_fractal_type == 6: # Lyapunov
+            # Lyapunov colormap is special and doesn't use the standard reverse flag directly here
+            # Its primary coloring is fixed by apply_lyapunov_colormap
             if self.blend_enabled:
                 rgb1 = apply_lyapunov_colormap(pixels)
-                rgb2 = apply_colormap(np.copy(pixels), self.colormap_2_name)
+                # Secondary colormap in blend can be reversed
+                rgb2 = apply_colormap(np.copy(pixels), self.colormap_2_name,
+                                      reverse_cmap=getattr(self, 'cmap2_reversed', False))
                 colored = rgb1 * (1 - self.blend_factor) + rgb2 * self.blend_factor
                 colored = np.clip(colored, 0, 255).astype(np.uint8)
             else:
                 colored = apply_lyapunov_colormap(pixels)
-        else:
+        else: # For other fractals
             if self.blend_enabled:
                 colored = blend_colormaps(
                     pixels,
@@ -106,10 +157,13 @@ class FractalWorker(QThread):
                     self.blend_factor,
                     self.blend_mode,
                     self.nonlinear_power,
-                    self.segment_point
+                    self.segment_point,
+                    reverse_cmap1=getattr(self, 'cmap1_reversed', False), # Pass reverse flag
+                    reverse_cmap2=getattr(self, 'cmap2_reversed', False)  # Pass reverse flag
                 )
             else:
-                colored = apply_colormap(pixels, self.colormap_name)
+                colored = apply_colormap(pixels, self.colormap_name,
+                                         reverse_cmap=getattr(self, 'cmap1_reversed', False)) # Pass reverse flag
 
         if self._abort:
             return
@@ -170,9 +224,14 @@ class FractalExplorer(QWidget):
         self.last_pos = None
         self.animation_width = None
         self.animation_height = None
+        self.use_high_precision = False # For mpmath
+        self.mpmath_dps = 30 # Default dps for mpmath
 
     def _setup_ui(self):
-        # --- Controls ---
+        main_layout = QVBoxLayout()
+        self.setLayout(main_layout)
+
+        # --- Image Display ---
         self.image_label = FractalImageLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -196,7 +255,9 @@ class FractalExplorer(QWidget):
         self.cmap_combo = QComboBox()
         self.cmap_combo.addItems(list(COLORMAPS.keys()))
         self.cmap_combo.setCurrentText(self.colormap_name)
-        self.cmap_combo.currentTextChanged.connect(self.set_colormap)
+        self.cmap_combo.currentTextChanged.connect(self.start_render) # Changed to start_render for immediate effect
+        self.cmap_reverse_checkbox = QCheckBox("Reverse")
+        self.cmap_reverse_checkbox.stateChanged.connect(self.start_render)
         self.fractal_combo = QComboBox()
         self.fractal_combo.addItems([
             "Mandelbrot", "Julia", "Burning Ship", "Tricorn", "Celtic Mandelbrot",
@@ -240,6 +301,7 @@ class FractalExplorer(QWidget):
         control_layout.addWidget(self.iter_label)
         control_layout.addWidget(QLabel("Colormap:"))
         control_layout.addWidget(self.cmap_combo)
+        control_layout.addWidget(self.cmap_reverse_checkbox) # Added reverse checkbox
         control_layout.addWidget(self.render_button)
         control_layout.addWidget(self.save_button)
         control_layout.addWidget(self.reset_button)
@@ -270,6 +332,8 @@ class FractalExplorer(QWidget):
         self.cmap2_combo.addItems(list(COLORMAPS.keys()))
         self.cmap2_combo.setCurrentText('viridis')
         self.cmap2_combo.currentTextChanged.connect(self.start_render)
+        self.cmap2_reverse_checkbox = QCheckBox("Reverse") # Added reverse checkbox for cmap2
+        self.cmap2_reverse_checkbox.stateChanged.connect(self.start_render)
         self.blend_factor_slider = QSlider(Qt.Horizontal)
         self.blend_factor_slider.setRange(0, 100)
         self.blend_factor_slider.setValue(50)
@@ -287,6 +351,7 @@ class FractalExplorer(QWidget):
         blend_layout.addWidget(self.blend_checkbox)
         blend_layout.addWidget(QLabel("Colormap 2:"))
         blend_layout.addWidget(self.cmap2_combo)
+        blend_layout.addWidget(self.cmap2_reverse_checkbox) # Added reverse checkbox for cmap2
         blend_layout.addWidget(QLabel("Blend Factor:"))
         blend_layout.addWidget(self.blend_factor_slider)
         blend_layout.addWidget(QLabel("Blend Mode:"))
@@ -310,24 +375,24 @@ class FractalExplorer(QWidget):
         self.fractal2_combo.currentIndexChanged.connect(self.update_fractal_blend_params)
 
         self.fractal2_power_label = QLabel("Power/Seq:") # Label for power/sequence input
-        self.fractal2_power_input = QLineEdit("2") # Renamed from fractal2_power
+        self.fractal2_power_input = QLineEdit("2")
         self.fractal2_power_input.setFixedWidth(80)
-        self.fractal2_power_input.editingFinished.connect(self.update_fractal_blend_params)
+        self.fractal2_power_input.editingFinished.connect(self.start_render) # Connect to start_render
 
-        self.fractal2_iter_input = QLineEdit("500") # Renamed from fractal2_iter
+        self.fractal2_iter_input = QLineEdit("500")
         self.fractal2_iter_input.setFixedWidth(60)
-        self.fractal2_iter_input.editingFinished.connect(self.update_fractal_blend_params)
+        self.fractal2_iter_input.editingFinished.connect(self.start_render) # Connect to start_render
 
         self.fractal_blend_factor_slider = QSlider(Qt.Horizontal)
         self.fractal_blend_factor_slider.setRange(0, 100)
         self.fractal_blend_factor_slider.setValue(50)
-        self.fractal_blend_factor_slider.valueChanged.connect(self.update_fractal_blend_params)
+        self.fractal_blend_factor_slider.valueChanged.connect(self.start_render) # Connect to start_render
 
         # Lyapunov specific controls for fractal 2 in blending (initially hidden)
         self.fractal2_lyapunov_seq_label = QLabel("Lyapunov Seq 2 (AB):")
         self.fractal2_lyapunov_seq_input = QLineEdit("AB")
         self.fractal2_lyapunov_seq_input.setFixedWidth(100)
-        self.fractal2_lyapunov_seq_input.editingFinished.connect(self.update_fractal_blend_params)
+        self.fractal2_lyapunov_seq_input.editingFinished.connect(self.start_render) # Connect to start_render
 
         fractal_blend_layout = QHBoxLayout()
         fractal_blend_layout.addWidget(self.fractal_blend_checkbox)
@@ -668,11 +733,30 @@ class FractalExplorer(QWidget):
             fractal2_iter=fractal2_iter_val,
             lyapunov_seq2=lyapunov_seq2_val,
             fractal_blend_mode=fractal_blend_mode,
-            fractal_blend_factor=fractal_blend_factor_val
+            fractal_blend_factor=fractal_blend_factor_val,
+            cmap1_reversed=self.cmap_reverse_checkbox.isChecked(), # Pass reverse flag for cmap1
+            cmap2_reversed=self.cmap2_reverse_checkbox.isChecked() # Pass reverse flag for cmap2
         )
         self.worker.image_ready.connect(self.handle_image_ready)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.finished_signal.connect(self.render_finished)
+
+        # Add new precision parameters to worker
+        self.worker.use_mpmath_precision = self.use_high_precision_checkbox.isChecked()
+
+        current_dps_text = self.precision_dps_lineedit.text()
+        try:
+            dps_value = int(current_dps_text)
+            if dps_value < 2: # mpmath requires at least 1-2 dps for basic ops, practical minimum higher
+                dps_value = 15 # Sensible minimum
+                self.precision_dps_lineedit.setText(str(dps_value))
+                self.status_label.setText("Info: DPS set to minimum practical value.")
+            self.worker.mpmath_dps = dps_value
+        except ValueError:
+            self.status_label.setText("Error: Invalid DPS value. Using default.")
+            self.precision_dps_lineedit.setText("30") # Reset to default
+            self.worker.mpmath_dps = 30
+
         self.worker.start()
 
     def _safe_float(self, text, default):
