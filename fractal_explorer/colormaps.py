@@ -1,7 +1,12 @@
 import numpy as np
+from typing import Dict, Optional, Literal
+
+# Type alias for a colormap (list of RGB colors)
+ColorLut = np.ndarray # Should be shape (N, 3) and dtype uint8
 
 # --- Colormaps for Fractal Visualization ---
-COLORMAPS = {
+# Dictionary mapping colormap names to their LUTs (Look-Up Tables)
+COLORMAPS: Dict[str, ColorLut] = {
     'plasma': np.array([
         [13, 8, 135], [62, 4, 153], [98, 2, 167], [132, 7, 173],
         [161, 19, 173], [187, 36, 169], [211, 55, 161], [230, 75, 150],
@@ -75,12 +80,12 @@ COLORMAPS = {
         [0, 204, 51], [0, 255, 0], [51, 255, 51], [102, 255, 102],
         [153, 255, 153], [204, 255, 204], [255, 255, 255]
     ], dtype=np.uint8),
-    'cividis': np.array([
+    'cividis': np.array([ # Note: Cividis is perceptually uniform, good for data viz
         [0, 0, 128], [0, 0, 255], [0, 128, 255], [0, 255, 255],
         [128, 255, 128], [255, 255, 0], [255, 128, 0], [255, 0, 0],
         [128, 0, 0]
-    ], dtype=np.uint8),
-    'seismic': np.array([
+    ], dtype=np.uint8), # This is a simplified version, actual Cividis has more points
+    'seismic': np.array([ # Diverging colormap
         [0, 0, 255], [0, 128, 255], [0, 255, 255], [128, 255, 128],
         [255, 255, 0], [255, 128, 0], [255, 0, 0], [128, 0, 0]
     ], dtype=np.uint8),
@@ -95,143 +100,245 @@ COLORMAPS = {
 }
 
 # --- Function to Apply Colormap ---
-def apply_colormap(arr, colormap_name='plasma'):
+def apply_colormap(
+    arr: np.ndarray,
+    colormap_name: str = 'plasma'
+) -> np.ndarray:
     """
-    Apply a standard colormap to a 2D array.
-    Handles nan/inf and constant arrays robustly.
-    """
-    arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
-    min_val = arr.min()
-    max_val = arr.max()
-    if not np.isfinite(min_val) or not np.isfinite(max_val) or max_val - min_val < 1e-10:
-        normalized = np.zeros_like(arr)
-    else:
-        normalized = (arr - min_val) / (max_val - min_val)
-    lut = COLORMAPS.get(colormap_name, COLORMAPS['plasma'])
-    indices = np.clip((normalized * (lut.shape[0] - 1)).astype(np.uint8), 0, lut.shape[0] - 1)
-    return lut[indices]
+    Applies a named colormap to a 2D array of scalar values.
 
-def blend_colormaps(
-    arr,
-    colormap_name='plasma',
-    colormap_2_name='viridis',
-    blend_factor=0.5,
-    blend_mode='linear',
-    nonlinear_power=2.0,
-    segment_point=0.5
-):
-    """
-    Blend two colormaps using different modes.
-    blend_mode: 'linear', 'nonlinear', 'segment'
-    nonlinear_power: used if blend_mode == 'nonlinear'
-    segment_point: used if blend_mode == 'segment', in [0,1]
-    """
-    arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
-    min_val = arr.min()
-    max_val = arr.max()
-    if max_val - min_val < 1e-10:
-        normalized = np.zeros_like(arr)
-    else:
-        normalized = (arr - min_val) / (max_val - min_val)
-    lut1 = COLORMAPS.get(colormap_name, COLORMAPS['plasma'])
-    lut2 = COLORMAPS.get(colormap_2_name, COLORMAPS['viridis'])
-    indices1 = np.clip((normalized * (lut1.shape[0] - 1)).astype(np.uint8), 0, lut1.shape[0] - 1)
-    indices2 = np.clip((normalized * (lut2.shape[0] - 1)).astype(np.uint8), 0, lut2.shape[0] - 1)
-    colors1 = lut1[indices1]
-    colors2 = lut2[indices2]
-
-    if blend_mode == 'linear':
-        blended = colors1 * (1 - blend_factor) + colors2 * blend_factor
-    elif blend_mode == 'nonlinear':
-        t = np.clip(blend_factor, 0, 1)
-        t_nl = t ** nonlinear_power
-        blended = colors1 * (1 - t_nl) + colors2 * t_nl
-    elif blend_mode == 'segment':
-        mask = normalized < segment_point
-        blended = np.where(mask[..., None], colors1, colors2)
-    else:
-        blended = colors1 * (1 - blend_factor) + colors2 * blend_factor
-
-    return np.clip(blended, 0, 255).astype(np.uint8)
-
-DEFAULT_LYAPUNOV_COLORS = {
-    'positive_chaos_start': np.array([255, 255, 0], dtype=np.uint8),  # Yellow
-    'positive_chaos_end': np.array([255, 0, 0], dtype=np.uint8),    # Red
-    'negative_order_start': np.array([173, 216, 230], dtype=np.uint8), # Light Blue
-    'negative_order_end': np.array([0, 0, 139], dtype=np.uint8),      # Dark Blue
-    'divergent': np.array([0, 0, 0], dtype=np.uint8)               # Black
-}
-
-def apply_lyapunov_colormap(lyapunov_exponents, custom_colors=None):
-    """
-    Applies a specific colormap to Lyapunov exponents, distinguishing between
-    chaotic (positive), ordered (negative), and divergent regions.
-
-    The coloring uses gradients for positive and negative exponent ranges independently.
-    Positive exponents are mapped from 'positive_chaos_start' to 'positive_chaos_end'.
-    Negative exponents are mapped from 'negative_order_start' (for values closest to zero)
-    to 'negative_order_end' (for values most negative).
-    Non-finite values (like -np.inf from lyapunov_exponent function) are colored 'divergent'.
+    The input array is first normalized to the range [0, 1]. These normalized
+    values are then used as indices into the specified colormap's Look-Up Table (LUT).
+    Handles NaN/infinity values by converting them to 0. If the input array has
+    a constant value (max_val - min_val is very small), it maps all values to the
+    first color in the LUT.
 
     Args:
-        lyapunov_exponents (np.ndarray): Array of calculated Lyapunov exponents.
-        custom_colors (dict, optional): A dictionary to override default colors.
-            Expected keys: 'positive_chaos_start', 'positive_chaos_end',
-                           'negative_order_start', 'negative_order_end', 'divergent'.
+        arr: A 2D NumPy array of float values (e.g., iteration counts from fractal calculation).
+        colormap_name: The name of the colormap to apply (must be a key in COLORMAPS).
+                       Defaults to 'plasma'.
 
     Returns:
-        np.ndarray: RGB image array (height, width, 3) of dtype np.uint8.
+        A 3D NumPy array (height, width, 3) of uint8 RGB values, representing the colored image.
+        Returns an array of zeros of the same shape if the input array is empty.
     """
+    if arr.size == 0:
+        return np.zeros((arr.shape[0], arr.shape[1], 3), dtype=np.uint8)
+
+    # Replace NaN, -inf, +inf with a numeric value (e.g., 0)
+    # This prevents errors in min/max calculation and normalization.
+    # The choice of 0.0 for nan/inf is arbitrary but common.
+    processed_arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
+
+    min_val = processed_arr.min()
+    max_val = processed_arr.max()
+
+    # Normalize the array to [0, 1]
+    # If min_val and max_val are the same (or very close), all normalized values will be 0.
+    # This robustly handles constant arrays.
+    if not np.isfinite(min_val) or not np.isfinite(max_val) or (max_val - min_val) < 1e-10:
+        # If range is zero or non-finite, map all to the first color (index 0)
+        normalized_arr = np.zeros_like(processed_arr, dtype=float)
+    else:
+        normalized_arr = (processed_arr - min_val) / (max_val - min_val)
+
+    lut: ColorLut = COLORMAPS.get(colormap_name, COLORMAPS['plasma']) # Default to 'plasma' if name not found
+
+    # Scale normalized values to indices of the LUT
+    # Ensure indices are within the valid range [0, lut.shape[0] - 1]
+    indices = np.clip((normalized_arr * (lut.shape[0] - 1)), 0, lut.shape[0] - 1).astype(np.uint8)
+
+    return lut[indices]
+
+BlendMode = Literal['linear', 'nonlinear', 'segment']
+
+def blend_colormaps(
+    arr: np.ndarray,
+    colormap_name: str = 'plasma',
+    colormap_2_name: str = 'viridis',
+    blend_factor: float = 0.5,
+    blend_mode: BlendMode = 'linear',
+    nonlinear_power: float = 2.0,
+    segment_point: float = 0.5
+) -> np.ndarray:
+    """
+    Applies two different colormaps to an array and blends the results.
+
+    The input array is first normalized. Then, two RGB color arrays are generated
+    using `colormap_name` and `colormap_2_name`. These two color arrays are then
+    blended based on the specified `blend_mode` and `blend_factor`.
+
+    Args:
+        arr: 2D NumPy array of scalar values.
+        colormap_name: Name of the first colormap.
+        colormap_2_name: Name of the second colormap.
+        blend_factor: Factor for blending. Interpretation depends on `blend_mode`.
+                      For 'linear' and 'nonlinear', it's typically in [0, 1].
+        blend_mode: Method for blending:
+            'linear': Linear interpolation: `(1-f)*c1 + f*c2`.
+            'nonlinear': Nonlinear interpolation using `blend_factor` raised to `nonlinear_power`.
+            'segment': Uses `colors1` if `normalized_value < segment_point`, else `colors2`.
+        nonlinear_power: Exponent for 'nonlinear' blending.
+        segment_point: Threshold for 'segment' blending, normalized to [0, 1].
+
+    Returns:
+        A 3D NumPy array (height, width, 3) of uint8 RGB values,
+        representing the blended colored image.
+        Returns an array of zeros if the input array is empty.
+    """
+    if arr.size == 0:
+        return np.zeros((arr.shape[0], arr.shape[1], 3), dtype=np.uint8)
+
+    processed_arr = np.nan_to_num(arr, nan=0.0, neginf=0.0, posinf=0.0)
+    min_val = processed_arr.min()
+    max_val = processed_arr.max()
+
+    if not np.isfinite(min_val) or not np.isfinite(max_val) or (max_val - min_val) < 1e-10:
+        normalized_arr = np.zeros_like(processed_arr, dtype=float)
+    else:
+        normalized_arr = (processed_arr - min_val) / (max_val - min_val)
+
+    # Apply the two colormaps
+    # Note: apply_colormap itself handles normalization and LUT indexing.
+    # Here, we are effectively re-doing normalization to get colors1 and colors2
+    # This is slightly redundant but ensures the blend logic below has normalized_arr.
+    # A more optimized path might pass normalized_arr to apply_colormap or have a variant.
+    # However, current apply_colormap is self-contained.
+
+    colors1 = apply_colormap(processed_arr, colormap_name) # arr is already processed_arr
+    colors2 = apply_colormap(processed_arr, colormap_2_name)
+
+    blended_colors: np.ndarray
+
+    if blend_mode == 'linear':
+        factor = np.clip(blend_factor, 0.0, 1.0)
+        blended_colors = colors1 * (1.0 - factor) + colors2 * factor
+    elif blend_mode == 'nonlinear':
+        t = np.clip(blend_factor, 0.0, 1.0)
+        # Ensure nonlinear_power is positive to avoid issues with t=0
+        safe_power = max(1e-6, nonlinear_power) # Avoid power of 0 or negative if t can be 0
+        t_nl = t ** safe_power
+        blended_colors = colors1 * (1.0 - t_nl) + colors2 * t_nl
+    elif blend_mode == 'segment':
+        # Ensure segment_point is within [0,1] for normalized_arr comparison
+        safe_segment_point = np.clip(segment_point, 0.0, 1.0)
+        # Mask needs to be broadcastable to colors1/colors2 shape (H, W, 3)
+        # normalized_arr is (H, W), so add new axis for broadcasting.
+        mask = normalized_arr[..., np.newaxis] < safe_segment_point
+        blended_colors = np.where(mask, colors1, colors2)
+    else: # Default to linear blend if mode is unknown
+        factor = np.clip(blend_factor, 0.0, 1.0)
+        blended_colors = colors1 * (1.0 - factor) + colors2 * factor
+        # Consider logging a warning for unrecognized blend_mode
+
+    return np.clip(blended_colors, 0, 255).astype(np.uint8)
+
+# Default colors for Lyapunov exponent visualization
+DEFAULT_LYAPUNOV_COLORS: Dict[str, np.ndarray] = {
+    'positive_chaos_start': np.array([255, 255, 0], dtype=np.uint8),  # Yellow
+    'positive_chaos_end': np.array([255, 0, 0], dtype=np.uint8),      # Red
+    'negative_order_start': np.array([173, 216, 230], dtype=np.uint8),# Light Blue (order, close to 0)
+    'negative_order_end': np.array([0, 0, 139], dtype=np.uint8),      # Dark Blue (order, very negative)
+    'divergent': np.array([0, 0, 0], dtype=np.uint8),                 # Black (for -inf or non-finite)
+    'zero_boundary': np.array([200, 200, 200], dtype=np.uint8)        # Gray (for values very close to zero)
+}
+
+LyapunovColorKey = Literal[
+    'positive_chaos_start', 'positive_chaos_end',
+    'negative_order_start', 'negative_order_end',
+    'divergent', 'zero_boundary'
+]
+CustomLyapunovColors = Dict[LyapunovColorKey, np.ndarray]
+
+
+def apply_lyapunov_colormap(
+    lyapunov_exponents: np.ndarray,
+    custom_colors: Optional[CustomLyapunovColors] = None
+) -> np.ndarray:
+    """
+    Applies a specialized colormap to Lyapunov exponent data.
+
+    This colormap distinguishes between:
+    - Divergent regions (non-finite exponents).
+    - Chaotic regions (positive exponents), colored with a gradient.
+    - Ordered regions (negative exponents), colored with a separate gradient.
+    - Regions with exponents very close to zero (boundary).
+
+    Args:
+        lyapunov_exponents: 2D NumPy array of Lyapunov exponents.
+        custom_colors: Optional dictionary to override default colors.
+                       Keys should match `LyapunovColorKey`.
+
+    Returns:
+        A 3D NumPy array (height, width, 3) of uint8 RGB values.
+        Returns an array of zeros if the input array is empty.
+    """
+    if lyapunov_exponents.size == 0:
+        return np.zeros((lyapunov_exponents.shape[0], lyapunov_exponents.shape[1], 3), dtype=np.uint8)
+
     colors = DEFAULT_LYAPUNOV_COLORS.copy()
     if custom_colors:
-        colors.update(custom_colors)
+        colors.update(custom_colors) # type: ignore
 
     height, width = lyapunov_exponents.shape
     rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
 
-    # --- Identify different regions based on exponent values ---
-    is_divergent = ~np.isfinite(lyapunov_exponents) | (lyapunov_exponents == -np.inf)
-    finite_exp = np.copy(lyapunov_exponents)
-    finite_exp[is_divergent] = 0
-
+    # Epsilon for floating point comparisons (e.g., distinguishing from zero)
     epsilon = 1e-9
-    is_positive = finite_exp > epsilon
-    is_negative = finite_exp < -epsilon
 
-    # 1. Divergent points
+    # 1. Handle divergent points (NaN, +/- Inf)
+    # These are typically set to -np.inf by the lyapunov_exponent function on divergence.
+    is_divergent = ~np.isfinite(lyapunov_exponents)
     rgb_image[is_divergent] = colors['divergent']
 
-    # 2. Positive exponents (chaotic)
+    # Create a working copy for finite values, setting divergent points to 0 for now
+    # This avoids issues with min/max on arrays containing non-finite values.
+    finite_exp = np.where(is_divergent, 0.0, lyapunov_exponents)
+
+    # 2. Positive exponents (chaotic region)
+    is_positive = finite_exp > epsilon
     if np.any(is_positive):
-        pos_exponents = lyapunov_exponents[is_positive]
-        min_pos = pos_exponents.min()
-        max_pos = pos_exponents.max()
-        if max_pos - min_pos < epsilon:
-            norm_pos = np.zeros_like(pos_exponents)
-        else:
-            norm_pos = (pos_exponents - min_pos) / (max_pos - min_pos)
-        rgb_image[is_positive] = (
-            colors['positive_chaos_start'] * (1 - norm_pos)[:, None] +
-            colors['positive_chaos_end'] * norm_pos[:, None]
-        ).astype(np.uint8)
+        pos_exponents_values = finite_exp[is_positive]
+        min_pos = pos_exponents_values.min()
+        max_pos = pos_exponents_values.max()
 
-    # 3. Negative exponents (ordered)
+        if (max_pos - min_pos) < epsilon: # All positive values are virtually the same
+            norm_pos = 0.5 # Assign a mid-range color
+        else:
+            norm_pos = (pos_exponents_values - min_pos) / (max_pos - min_pos)
+
+        # Interpolate color: (1-t)*start + t*end
+        color_values = (colors['positive_chaos_start'].astype(np.float32) * (1.0 - norm_pos)[:, np.newaxis] +
+                        colors['positive_chaos_end'].astype(np.float32) * norm_pos[:, np.newaxis])
+        rgb_image[is_positive] = np.clip(color_values, 0, 255).astype(np.uint8)
+
+    # 3. Negative exponents (ordered region)
+    is_negative = finite_exp < -epsilon
     if np.any(is_negative):
-        neg_exponents = lyapunov_exponents[is_negative]
-        abs_neg_exponents = np.abs(neg_exponents)
-        min_neg_abs = abs_neg_exponents.min()
-        max_neg_abs = abs_neg_exponents.max()
-        if max_neg_abs - min_neg_abs < epsilon:
-            norm_neg_abs = np.zeros_like(abs_neg_exponents)
-        else:
-            norm_neg_abs = (abs_neg_exponents - min_neg_abs) / (max_neg_abs - min_neg_abs)
-        rgb_image[is_negative] = (
-            colors['negative_order_start'] * (1 - norm_neg_abs)[:, None] +
-            colors['negative_order_end'] * norm_neg_abs[:, None]
-        ).astype(np.uint8)
+        neg_exponents_values = finite_exp[is_negative] # These are negative
+        # We want to map values closer to zero to 'negative_order_start'
+        # and more negative values to 'negative_order_end'.
+        # So, normalize based on absolute values, but reverse the gradient direction.
+        abs_neg_exponents = np.abs(neg_exponents_values)
+        min_neg_abs = abs_neg_exponents.min() # Smallest magnitude (closest to zero)
+        max_neg_abs = abs_neg_exponents.max() # Largest magnitude (most negative)
 
-    # Optionally, color near-zero exponents (not divergent, not positive, not negative)
-    # is_zero_region = ~is_divergent & ~is_positive & ~is_negative
-    # rgb_image[is_zero_region] = np.array([128, 128, 128], dtype=np.uint8) # Gray
+        if (max_neg_abs - min_neg_abs) < epsilon: # All negative values are virtually the same
+            norm_neg_abs = 0.5 # Assign a mid-range color
+        else:
+            # Normalize so 0 corresponds to min_neg_abs, 1 to max_neg_abs
+            norm_neg_abs = (abs_neg_exponents - min_neg_abs) / (max_neg_abs - min_neg_abs)
+
+        # Interpolate color: (1-t)*start + t*end
+        # Here, t=0 (min_neg_abs) should map to negative_order_start (e.g. light blue)
+        # t=1 (max_neg_abs) should map to negative_order_end (e.g. dark blue)
+        color_values = (colors['negative_order_start'].astype(np.float32) * (1.0 - norm_neg_abs)[:, np.newaxis] +
+                        colors['negative_order_end'].astype(np.float32) * norm_neg_abs[:, np.newaxis])
+        rgb_image[is_negative] = np.clip(color_values, 0, 255).astype(np.uint8)
+
+    # 4. Near-zero exponents (boundary between order and chaos)
+    # These are finite, not positive ( > epsilon), and not negative ( < -epsilon)
+    is_zero_boundary = ~is_divergent & ~is_positive & ~is_negative
+    rgb_image[is_zero_boundary] = colors['zero_boundary']
 
     return rgb_image
